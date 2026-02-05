@@ -173,17 +173,61 @@ func matchGlob(pattern, str string) bool {
 		return true
 	}
 
-	if strings.HasPrefix(pattern, "*.") {
+	// Simple prefix wildcard: *.example.com
+	if strings.HasPrefix(pattern, "*.") && !strings.Contains(pattern[2:], "*") {
 		suffix := pattern[1:]
 		return strings.HasSuffix(str, suffix)
 	}
 
-	if strings.HasSuffix(pattern, ".*") {
+	// Simple suffix wildcard: example.*
+	if strings.HasSuffix(pattern, ".*") && !strings.Contains(pattern[:len(pattern)-2], "*") {
 		prefix := pattern[:len(pattern)-2]
 		return strings.HasPrefix(str, prefix+".")
 	}
 
+	// General glob matching with * as wildcard
+	if strings.Contains(pattern, "*") {
+		return matchWildcard(pattern, str)
+	}
+
 	return pattern == str
+}
+
+// matchWildcard handles patterns with * wildcards anywhere
+func matchWildcard(pattern, str string) bool {
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 1 {
+		return pattern == str
+	}
+
+	// Check prefix (before first *)
+	if parts[0] != "" && !strings.HasPrefix(str, parts[0]) {
+		return false
+	}
+	str = str[len(parts[0]):]
+
+	// Check suffix (after last *)
+	lastPart := parts[len(parts)-1]
+	if lastPart != "" && !strings.HasSuffix(str, lastPart) {
+		return false
+	}
+	if lastPart != "" {
+		str = str[:len(str)-len(lastPart)]
+	}
+
+	// Check middle parts in order
+	for i := 1; i < len(parts)-1; i++ {
+		if parts[i] == "" {
+			continue
+		}
+		idx := strings.Index(str, parts[i])
+		if idx < 0 {
+			return false
+		}
+		str = str[idx+len(parts[i]):]
+	}
+
+	return true
 }
 
 func isPrivateIP(host string) bool {

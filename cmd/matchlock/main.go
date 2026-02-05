@@ -71,16 +71,23 @@ Commands:
 Options:
   -it                    Interactive mode with TTY (like docker -it)
   --image <name>         Image variant (minimal, standard, full)
-  --allow-host <host>    Add host to allowlist (can be repeated)
+  --allow-host <host>    Add host to allowlist (can be repeated, supports wildcards)
   --cpus <n>             Number of CPUs
   --memory <mb>          Memory in MB
   --timeout <s>          Timeout in seconds
+
+Wildcard Patterns for --allow-host:
+  *                      Allow all hosts
+  *.example.com          Allow all subdomains (api.example.com, a.b.example.com)
+  api-*.example.com      Allow pattern match (api-v1.example.com, api-prod.example.com)
+  *-prod.example.com     Allow suffix match (api-prod.example.com)
 
 Examples:
   matchlock run python script.py
   matchlock run -it python3                              # Interactive Python
   matchlock run -it sh                                   # Interactive shell
-  matchlock run --allow-host "api.openai.com" python agent.py
+  matchlock run --allow-host "*.openai.com" python agent.py
+  matchlock run --allow-host "api-*.anthropic.com" curl https://api-v1.anthropic.com
   matchlock list
   matchlock kill vm-abc123`)
 }
