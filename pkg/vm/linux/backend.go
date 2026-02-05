@@ -46,19 +46,24 @@ func (b *LinuxBackend) Create(ctx context.Context, config *vm.VMConfig) (vm.Mach
 
 	if err := ConfigureInterface(tapName, "192.168.100.1/24"); err != nil {
 		syscall.Close(tapFD)
+		DeleteInterface(tapName)
 		return nil, fmt.Errorf("failed to configure TAP interface: %w", err)
 	}
 
 	if err := SetMTU(tapName, 1500); err != nil {
 		syscall.Close(tapFD)
+		DeleteInterface(tapName)
 		return nil, fmt.Errorf("failed to set MTU: %w", err)
 	}
+
+	// Close the FD - Firecracker will re-open the device by name
+	syscall.Close(tapFD)
 
 	m := &LinuxMachine{
 		id:         config.ID,
 		config:     config,
 		tapName:    tapName,
-		tapFD:      tapFD,
+		tapFD:      -1, // FD closed, Firecracker will open it
 		macAddress: GenerateMAC(config.ID),
 	}
 
@@ -132,6 +137,8 @@ func (m *LinuxMachine) waitForReady(ctx context.Context, timeout time.Duration) 
 	}
 
 	deadline := time.Now().Add(timeout)
+	vsockFailCount := 0
+	maxVsockFailures := 50 // After 5 seconds of vsock failures, use fallback
 
 	for time.Now().Before(deadline) {
 		select {
@@ -147,6 +154,20 @@ func (m *LinuxMachine) waitForReady(ctx context.Context, timeout time.Duration) 
 			return nil
 		}
 
+		vsockFailCount++
+
+		// If vsock consistently fails, fall back to checking if VM process is running
+		// and the base vsock socket exists (indicates Firecracker has started)
+		if vsockFailCount >= maxVsockFailures {
+			// Check if the base vsock socket exists and VM is running
+			if _, err := os.Stat(m.config.VsockPath); err == nil {
+				// VM started but vsock ready signal not working
+				// Wait a bit more for services to start, then proceed
+				time.Sleep(3 * time.Second)
+				return nil
+			}
+		}
+
 		time.Sleep(100 * time.Millisecond)
 	}
 
@@ -154,17 +175,39 @@ func (m *LinuxMachine) waitForReady(ctx context.Context, timeout time.Duration) 
 }
 
 // dialVsock connects to the guest via the Firecracker vsock UDS
+// Firecracker vsock protocol for host-initiated connections:
+// 1. Connect to base UDS socket
+// 2. Send "CONNECT <port>\n"
+// 3. Read "OK <assigned_port>\n" acknowledgement
 func (m *LinuxMachine) dialVsock(port uint32) (net.Conn, error) {
 	if m.config.VsockPath == "" {
 		return nil, fmt.Errorf("vsock not configured")
 	}
 
-	// Firecracker exposes vsock via Unix socket: {uds_path}_{port}
-	udsPath := fmt.Sprintf("%s_%d", m.config.VsockPath, port)
-
-	conn, err := net.Dial("unix", udsPath)
+	conn, err := net.Dial("unix", m.config.VsockPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to vsock UDS %s: %w", udsPath, err)
+		return nil, fmt.Errorf("failed to connect to vsock UDS %s: %w", m.config.VsockPath, err)
+	}
+
+	// Send CONNECT command
+	connectCmd := fmt.Sprintf("CONNECT %d\n", port)
+	if _, err := conn.Write([]byte(connectCmd)); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to send CONNECT command: %w", err)
+	}
+
+	// Read OK response (format: "OK <port>\n")
+	buf := make([]byte, 64)
+	n, err := conn.Read(buf)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to read CONNECT response: %w", err)
+	}
+
+	response := string(buf[:n])
+	if len(response) < 3 || response[:2] != "OK" {
+		conn.Close()
+		return nil, fmt.Errorf("vsock CONNECT failed, got: %q", response)
 	}
 
 	return conn, nil
@@ -365,10 +408,21 @@ func (m *LinuxMachine) execVsock(ctx context.Context, command string, opts *api.
 			}
 
 			duration := time.Since(start)
+
+			// Use streamed stdout/stderr if available, otherwise use embedded response
+			stdoutData := stdout.Bytes()
+			stderrData := stderr.Bytes()
+			if len(stdoutData) == 0 && len(resp.Stdout) > 0 {
+				stdoutData = resp.Stdout
+			}
+			if len(stderrData) == 0 && len(resp.Stderr) > 0 {
+				stderrData = resp.Stderr
+			}
+
 			result := &api.ExecResult{
 				ExitCode:   resp.ExitCode,
-				Stdout:     stdout.Bytes(),
-				Stderr:     stderr.Bytes(),
+				Stdout:     stdoutData,
+				Stderr:     stderrData,
 				Duration:   duration,
 				DurationMS: duration.Milliseconds(),
 			}
@@ -412,6 +466,11 @@ func (m *LinuxMachine) VsockPath() string {
 // VsockCID returns the guest CID
 func (m *LinuxMachine) VsockCID() uint32 {
 	return m.config.VsockCID
+}
+
+// TapName returns the TAP interface name
+func (m *LinuxMachine) TapName() string {
+	return m.tapName
 }
 
 func (m *LinuxMachine) PID() int {

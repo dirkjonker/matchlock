@@ -1,8 +1,8 @@
 # Matchlock Makefile
 
 # Configuration
-KERNEL_VERSION ?= 6.6.122
-OUTPUT_DIR ?= ~/.cache/matchlock
+KERNEL_VERSION ?= 6.1.137
+OUTPUT_DIR ?= $(HOME)/.cache/matchlock
 IMAGE ?= standard
 GO ?= go
 
@@ -114,7 +114,7 @@ rootfs-full: guest-binaries
 guest-binaries: $(GUEST_AGENT_BIN) $(GUEST_FUSED_BIN)
 
 .PHONY: images
-images: kernel rootfs-standard
+images: kernel docker-rootfs
 	@echo "Images built in $(OUTPUT_DIR)"
 	@ls -la $(OUTPUT_DIR)
 
@@ -147,6 +147,7 @@ install-images:
 .PHONY: docker-rootfs
 docker-rootfs: guest-binaries
 	@echo "Building rootfs using Docker..."
+	@mkdir -p $(OUTPUT_DIR)
 	@cp $(GUEST_AGENT_BIN) /tmp/guest-agent
 	@cp $(GUEST_FUSED_BIN) /tmp/guest-fused
 	docker run --rm --privileged \
@@ -156,7 +157,7 @@ docker-rootfs: guest-binaries
 		-e IMAGE=$(IMAGE) \
 		-e OUTPUT_DIR=$(OUTPUT_DIR) \
 		alpine:3.19 \
-		sh -c "apk add --no-cache bash e2fsprogs && /scripts/build-rootfs.sh"
+		sh -c "apk add --no-cache bash e2fsprogs util-linux && /scripts/build-rootfs.sh"
 
 # =============================================================================
 # Quick start

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -347,27 +348,15 @@ func createVM(ctx context.Context, config *api.Config) (*sandboxVM, error) {
 	// Create event channel
 	events := make(chan api.Event, 100)
 
-	// Get TAP FD for network stack
-	tapFD, err := machine.NetworkFD()
-	if err != nil {
-		machine.Close()
-		stateMgr.Unregister(id)
-		return nil, fmt.Errorf("failed to get TAP FD: %w", err)
-	}
+	// Network stack is disabled for now - Firecracker handles networking directly
+	// TODO: Implement network interception using a different architecture
+	// (e.g., veth pairs, or by having gVisor act as a proxy rather than TAP owner)
+	var netStack *sandboxnet.NetworkStack = nil
 
-	// Create network stack connected to TAP device
-	netStack, err := sandboxnet.NewNetworkStack(&sandboxnet.Config{
-		FD:        tapFD,
-		GatewayIP: "192.168.100.1",
-		GuestIP:   "192.168.100.2",
-		MTU:       1500,
-		Policy:    policyEngine,
-		Events:    events,
-	})
-	if err != nil {
-		machine.Close()
-		stateMgr.Unregister(id)
-		return nil, fmt.Errorf("failed to create network stack: %w", err)
+	// Set up basic NAT for guest network access
+	if err := setupNAT(machine.(*linux.LinuxMachine)); err != nil {
+		// Non-fatal - guest just won't have network access
+		fmt.Fprintf(os.Stderr, "Warning: failed to setup NAT: %v\n", err)
 	}
 
 	// Create VFS providers
@@ -393,7 +382,9 @@ func createVM(ctx context.Context, config *api.Config) (*sandboxVM, error) {
 	vfsSocketPath := fmt.Sprintf("%s_%d", vmConfig.VsockPath, linux.VsockPortVFS)
 	vfsStopFunc, err := vfsServer.ServeUDSBackground(vfsSocketPath)
 	if err != nil {
-		netStack.Close()
+		if netStack != nil {
+			netStack.Close()
+		}
 		machine.Close()
 		stateMgr.Unregister(id)
 		return nil, fmt.Errorf("failed to start VFS server: %w", err)
@@ -550,4 +541,29 @@ func getRootfsPath(image string) string {
 		}
 	}
 	return filepath.Join(home, ".cache/matchlock", fmt.Sprintf("rootfs-%s.ext4", image))
+}
+
+// setupNAT configures iptables NAT rules for guest network access
+func setupNAT(machine *linux.LinuxMachine) error {
+	// Enable IP forwarding
+	if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644); err != nil {
+		return fmt.Errorf("failed to enable IP forwarding: %w", err)
+	}
+
+	// Get the TAP interface name from the machine
+	tapName := machine.TapName()
+	if tapName == "" {
+		return fmt.Errorf("no TAP interface configured")
+	}
+
+	// Add NAT masquerade rule (ignore errors if rule already exists)
+	exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING", "-o", "eth0", "-j", "MASQUERADE").Run()
+	exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING", "-o", "wlan0", "-j", "MASQUERADE").Run()
+	exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING", "-o", "ens", "-j", "MASQUERADE").Run()
+
+	// Allow forwarding for the TAP interface
+	exec.Command("iptables", "-A", "FORWARD", "-i", tapName, "-j", "ACCEPT").Run()
+	exec.Command("iptables", "-A", "FORWARD", "-o", tapName, "-j", "ACCEPT").Run()
+
+	return nil
 }

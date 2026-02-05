@@ -123,11 +123,28 @@ matchlock --rpc
 
 ## Vsock Ports
 
-| Port | Service |
-|------|---------|
-| 5000 | Command execution |
-| 5001 | VFS protocol (FUSE) |
-| 5002 | Ready signal |
+| Port | Service | Direction |
+|------|---------|-----------|
+| 5000 | Command execution | Host → Guest |
+| 5001 | VFS protocol (FUSE) | Guest → Host |
+| 5002 | Ready signal | Host → Guest |
+
+## Firecracker Vsock Protocol
+
+Firecracker exposes vsock via Unix domain sockets with two connection patterns:
+
+### Host-Initiated Connections (exec, ready)
+1. Host connects to base UDS socket (`vsock.sock`)
+2. Host sends `CONNECT <port>\n` (e.g., `CONNECT 5000\n`)
+3. Firecracker responds with `OK <assigned_port>\n`
+4. Connection is established to guest service on that port
+
+### Guest-Initiated Connections (VFS)
+1. Host listens on `{uds_path}_{port}` (e.g., `vsock.sock_5001`)
+2. Guest connects to CID 2 (host) and port
+3. Firecracker forwards to the Unix socket
+
+**Important**: The `{uds_path}_{port}` sockets are only for guest-initiated connections. Host-initiated connections must use the CONNECT protocol on the base socket.
 
 ## Environment Variables
 
@@ -161,13 +178,21 @@ NODE_EXTRA_CA_CERTS=/etc/ssl/certs/sandbox-ca.crt
 
 ### Kernel
 
-Requirements: gcc, make, kernel headers, wget
+The kernel build uses Docker with Ubuntu 22.04 (GCC 11) for compatibility with older kernel sources.
 
 ```bash
-KERNEL_VERSION=6.6.122 OUTPUT_DIR=~/.cache/matchlock ./scripts/build-kernel.sh
+# Build kernel 6.1.137 (default)
+OUTPUT_DIR=~/.cache/matchlock ./scripts/build-kernel.sh
+
+# Custom version
+KERNEL_VERSION=6.1.140 OUTPUT_DIR=~/.cache/matchlock ./scripts/build-kernel.sh
 ```
 
-Enables: virtio-net, virtio-vsock, FUSE, ext4
+Required kernel options for Firecracker v1.8+:
+- `CONFIG_ACPI=y` and `CONFIG_PCI=y` - Required for virtio device initialization
+- `CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y` - Parse `virtio_mmio.device=` from cmdline
+- `CONFIG_VSOCKETS=y` and `CONFIG_VIRTIO_VSOCKETS=y` - Host-guest communication
+- `CONFIG_FUSE_FS=y` - VFS support
 
 ### Rootfs
 

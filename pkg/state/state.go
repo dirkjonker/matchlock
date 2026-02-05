@@ -25,7 +25,7 @@ type Manager struct {
 
 func NewManager() *Manager {
 	home, _ := os.UserHomeDir()
-	baseDir := filepath.Join(home, ".sandbox", "vms")
+	baseDir := filepath.Join(home, ".matchlock", "vms")
 	os.MkdirAll(baseDir, 0755)
 	return &Manager{baseDir: baseDir}
 }

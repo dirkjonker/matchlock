@@ -5,6 +5,7 @@ IMAGE="${IMAGE:-standard}"
 OUTPUT_DIR="${OUTPUT_DIR:-$HOME/.cache/matchlock}"
 BUILD_DIR="${BUILD_DIR:-/tmp/rootfs-build}"
 ROOTFS_SIZE="${ROOTFS_SIZE:-512M}"
+ALPINE_VERSION="${ALPINE_VERSION:-3.19}"
 
 echo "Building $IMAGE rootfs for Firecracker..."
 
@@ -13,6 +14,14 @@ cd "$BUILD_DIR"
 
 ROOTFS_IMG="$OUTPUT_DIR/rootfs-$IMAGE.ext4"
 
+# Download Alpine minirootfs if not cached
+MINIROOTFS="alpine-minirootfs-${ALPINE_VERSION}.0-x86_64.tar.gz"
+if [ ! -f "$MINIROOTFS" ]; then
+    echo "Downloading Alpine minirootfs..."
+    wget -q "https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/$MINIROOTFS"
+fi
+
+# Create and format the rootfs image
 truncate -s "$ROOTFS_SIZE" "$ROOTFS_IMG"
 mkfs.ext4 -F "$ROOTFS_IMG"
 
@@ -25,21 +34,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "Installing Alpine Linux base..."
-ALPINE_VERSION="3.19"
-ALPINE_ARCH="x86_64"
-ALPINE_MIRROR="https://dl-cdn.alpinelinux.org/alpine"
+echo "Extracting Alpine minirootfs..."
+tar xzf "$MINIROOTFS" -C "$MOUNT_DIR"
 
-mkdir -p "$MOUNT_DIR/etc/apk"
-echo "$ALPINE_MIRROR/v$ALPINE_VERSION/main" > "$MOUNT_DIR/etc/apk/repositories"
-echo "$ALPINE_MIRROR/v$ALPINE_VERSION/community" >> "$MOUNT_DIR/etc/apk/repositories"
+# Setup repositories
+echo "https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/main" > "$MOUNT_DIR/etc/apk/repositories"
+echo "https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/community" >> "$MOUNT_DIR/etc/apk/repositories"
 
-apk --root "$MOUNT_DIR" --initdb add alpine-base
+# Copy resolv.conf for DNS during package installation
+cp /etc/resolv.conf "$MOUNT_DIR/etc/resolv.conf" 2>/dev/null || echo "nameserver 8.8.8.8" > "$MOUNT_DIR/etc/resolv.conf"
 
 echo "Installing base packages..."
-apk --root "$MOUNT_DIR" add \
-    busybox \
+chroot "$MOUNT_DIR" apk update
+chroot "$MOUNT_DIR" apk add --no-cache \
     openrc \
+    busybox-openrc \
     ca-certificates \
     curl \
     wget
@@ -50,7 +59,7 @@ case "$IMAGE" in
         ;;
     standard)
         echo "Installing standard packages..."
-        apk --root "$MOUNT_DIR" add \
+        chroot "$MOUNT_DIR" apk add --no-cache \
             python3 \
             py3-pip \
             nodejs \
@@ -61,7 +70,7 @@ case "$IMAGE" in
         ;;
     full)
         echo "Installing full packages..."
-        apk --root "$MOUNT_DIR" add \
+        chroot "$MOUNT_DIR" apk add --no-cache \
             python3 \
             py3-pip \
             nodejs \
@@ -113,11 +122,11 @@ iface eth0 inet static
     gateway 192.168.100.1
 EOF
 
-echo "sandbox" > "$MOUNT_DIR/etc/hostname"
+echo "matchlock" > "$MOUNT_DIR/etc/hostname"
 
 cat > "$MOUNT_DIR/etc/hosts" << 'EOF'
 127.0.0.1   localhost
-192.168.100.2   sandbox
+192.168.100.2   matchlock
 EOF
 
 echo "nameserver 8.8.8.8" > "$MOUNT_DIR/etc/resolv.conf"
@@ -136,7 +145,7 @@ fi
 cat > "$MOUNT_DIR/etc/init.d/guest-agent" << 'EOF'
 #!/sbin/openrc-run
 name="guest-agent"
-description="Sandbox guest agent"
+description="Matchlock guest agent"
 command="/usr/local/bin/guest-agent"
 command_background="yes"
 pidfile="/run/${RC_SVCNAME}.pid"
@@ -153,7 +162,7 @@ chmod +x "$MOUNT_DIR/etc/init.d/guest-agent"
 cat > "$MOUNT_DIR/etc/init.d/guest-fused" << 'EOF'
 #!/sbin/openrc-run
 name="guest-fused"
-description="Sandbox FUSE daemon"
+description="Matchlock FUSE daemon"
 command="/usr/local/bin/guest-fused"
 command_args="/workspace"
 command_background="yes"
@@ -167,22 +176,24 @@ depend() {
 EOF
 chmod +x "$MOUNT_DIR/etc/init.d/guest-fused"
 
-chroot "$MOUNT_DIR" /sbin/rc-update add devfs sysinit
-chroot "$MOUNT_DIR" /sbin/rc-update add dmesg sysinit
-chroot "$MOUNT_DIR" /sbin/rc-update add mdev sysinit
-chroot "$MOUNT_DIR" /sbin/rc-update add hwclock boot
-chroot "$MOUNT_DIR" /sbin/rc-update add modules boot
-chroot "$MOUNT_DIR" /sbin/rc-update add sysctl boot
-chroot "$MOUNT_DIR" /sbin/rc-update add hostname boot
-chroot "$MOUNT_DIR" /sbin/rc-update add bootmisc boot
-chroot "$MOUNT_DIR" /sbin/rc-update add networking default
-chroot "$MOUNT_DIR" /sbin/rc-update add guest-agent default
-chroot "$MOUNT_DIR" /sbin/rc-update add guest-fused default
-chroot "$MOUNT_DIR" /sbin/rc-update add mount-ro shutdown
-chroot "$MOUNT_DIR" /sbin/rc-update add killprocs shutdown
-chroot "$MOUNT_DIR" /sbin/rc-update add savecache shutdown
+# Enable services (ignore errors for optional services)
+chroot "$MOUNT_DIR" rc-update add devfs sysinit || true
+chroot "$MOUNT_DIR" rc-update add dmesg sysinit || true
+chroot "$MOUNT_DIR" rc-update add mdev sysinit || true
+chroot "$MOUNT_DIR" rc-update add hwclock boot || true
+chroot "$MOUNT_DIR" rc-update add modules boot || true
+chroot "$MOUNT_DIR" rc-update add sysctl boot || true
+chroot "$MOUNT_DIR" rc-update add hostname boot || true
+chroot "$MOUNT_DIR" rc-update add bootmisc boot || true
+chroot "$MOUNT_DIR" rc-update add networking default
+chroot "$MOUNT_DIR" rc-update add guest-agent default
+chroot "$MOUNT_DIR" rc-update add guest-fused default
+chroot "$MOUNT_DIR" rc-update add mount-ro shutdown || true
+chroot "$MOUNT_DIR" rc-update add killprocs shutdown || true
+chroot "$MOUNT_DIR" rc-update add savecache shutdown || true
 
-echo "root:sandbox" | chroot "$MOUNT_DIR" chpasswd
+# Set root password
+echo "root:matchlock" | chroot "$MOUNT_DIR" chpasswd
 
 sync
 umount "$MOUNT_DIR"
