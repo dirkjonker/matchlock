@@ -391,7 +391,7 @@ func runInteractive(ctx context.Context, sb *sandbox.Sandbox, command string) in
 
 	opts := &api.ExecOptions{Env: make(map[string]string)}
 	if sb.CAInjector() != nil {
-		certPath := sb.Workspace() + "/.sandbox-ca.crt"
+		certPath := "/etc/ssl/certs/matchlock-ca.crt"
 		opts.Env["SSL_CERT_FILE"] = certPath
 		opts.Env["REQUESTS_CA_BUNDLE"] = certPath
 		opts.Env["CURL_CA_BUNDLE"] = certPath

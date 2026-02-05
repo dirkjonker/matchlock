@@ -240,17 +240,18 @@ Firecracker exposes vsock via Unix domain sockets with two connection patterns:
 
 ## CA Certificate Injection
 
-The sandbox intercepts HTTPS traffic via MITM. To trust the CA in guest:
+The sandbox intercepts HTTPS traffic via MITM. The CA certificate is automatically injected into the rootfs at `/etc/ssl/certs/matchlock-ca.crt` before the VM starts.
+
+Environment variables are auto-injected:
 
 ```bash
-# Environment variables (auto-injected)
-SSL_CERT_FILE=/etc/ssl/certs/sandbox-ca.crt
-REQUESTS_CA_BUNDLE=/etc/ssl/certs/sandbox-ca.crt
-NODE_EXTRA_CA_CERTS=/etc/ssl/certs/sandbox-ca.crt
-
-# Or run install script
-/tmp/install-ca.sh
+SSL_CERT_FILE=/etc/ssl/certs/matchlock-ca.crt
+REQUESTS_CA_BUNDLE=/etc/ssl/certs/matchlock-ca.crt
+CURL_CA_BUNDLE=/etc/ssl/certs/matchlock-ca.crt
+NODE_EXTRA_CA_CERTS=/etc/ssl/certs/matchlock-ca.crt
 ```
+
+No manual setup required - HTTPS interception works out of the box.
 
 ## Building Images
 

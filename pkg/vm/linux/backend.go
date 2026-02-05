@@ -651,6 +651,10 @@ func (m *LinuxMachine) PID() int {
 	return m.pid
 }
 
+func (m *LinuxMachine) RootfsPath() string {
+	return m.config.RootfsPath
+}
+
 func (m *LinuxMachine) Close() error {
 	var errs []error
 

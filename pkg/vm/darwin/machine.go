@@ -399,6 +399,10 @@ func (m *DarwinMachine) PID() int {
 	return 0
 }
 
+func (m *DarwinMachine) RootfsPath() string {
+	return m.tempRootfs
+}
+
 func (m *DarwinMachine) Close() error {
 	var errs []error
 

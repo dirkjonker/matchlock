@@ -219,19 +219,16 @@ fi
 WORKSPACE=$(cat /proc/cmdline | tr ' ' '\n' | grep 'matchlock.workspace=' | cut -d= -f2)
 [ -z "$WORKSPACE" ] && WORKSPACE="/workspace"
 
-# Wait for VFS mount and inject CA cert if present (only exists when proxy is enabled)
+# Wait for VFS mount before starting agent
 for i in $(seq 1 50); do
-    if [ -f "$WORKSPACE/.sandbox-ca.crt" ]; then
-        mkdir -p /etc/ssl/certs
-        cat "$WORKSPACE/.sandbox-ca.crt" >> /etc/ssl/certs/ca-certificates.crt 2>/dev/null
-        break
-    fi
-    # Check if workspace is mounted but CA doesn't exist (no proxy)
     if mount | grep -q "$WORKSPACE"; then
         break
     fi
     sleep 0.1
 done
+
+# CA cert is injected directly into rootfs at /etc/ssl/certs/matchlock-ca.crt
+# No VFS-based injection needed
 
 exec /opt/matchlock/guest-agent
 `

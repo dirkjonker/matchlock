@@ -42,6 +42,7 @@ type Machine interface {
 	VsockFD() (int, error)
 	PID() int
 	Close() error
+	RootfsPath() string // Returns the path to the VM's rootfs (may be a temp copy)
 }
 
 type InteractiveMachine interface {
