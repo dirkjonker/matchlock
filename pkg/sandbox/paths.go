@@ -3,6 +3,7 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // DefaultKernelPath returns the default path to the kernel image.
@@ -13,12 +14,19 @@ func DefaultKernelPath() string {
 		sudoHome = filepath.Join("/home", sudoUser)
 	}
 
+	// On darwin/arm64, prefer kernel-arm64
+	kernelName := "kernel"
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		kernelName = "kernel-arm64"
+	}
+
 	paths := []string{
 		os.Getenv("MATCHLOCK_KERNEL"),
-		filepath.Join(home, ".cache/matchlock/kernel"),
+		filepath.Join(home, ".cache/matchlock", kernelName),
+		filepath.Join(home, ".cache/matchlock/kernel"), // fallback
 	}
 	if sudoHome != "" {
-		paths = append(paths, filepath.Join(sudoHome, ".cache/matchlock/kernel"))
+		paths = append(paths, filepath.Join(sudoHome, ".cache/matchlock", kernelName))
 	}
 
 	for _, p := range paths {
@@ -28,7 +36,7 @@ func DefaultKernelPath() string {
 			}
 		}
 	}
-	return filepath.Join(home, ".cache/matchlock/kernel")
+	return filepath.Join(home, ".cache/matchlock", kernelName)
 }
 
 // DefaultInitramfsPath returns the default path to the initramfs image (optional, mainly for macOS).

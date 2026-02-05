@@ -28,12 +28,6 @@ func (b *DarwinBackend) Name() string {
 }
 
 func (b *DarwinBackend) Create(ctx context.Context, config *vm.VMConfig) (vm.Machine, error) {
-	// Debug: print config
-	fmt.Fprintf(os.Stderr, "DEBUG: Creating VM with config:\n")
-	fmt.Fprintf(os.Stderr, "  Kernel: %s\n", config.KernelPath)
-	fmt.Fprintf(os.Stderr, "  Rootfs: %s\n", config.RootfsPath)
-	fmt.Fprintf(os.Stderr, "  CPUs: %d, Memory: %d MB\n", config.CPUs, config.MemoryMB)
-
 	// Verify files exist
 	if _, err := os.Stat(config.KernelPath); err != nil {
 		return nil, fmt.Errorf("kernel not found: %s: %w", config.KernelPath, err)
@@ -48,8 +42,6 @@ func (b *DarwinBackend) Create(ctx context.Context, config *vm.VMConfig) (vm.Mac
 	}
 
 	kernelArgs := b.buildKernelArgs(config)
-	fmt.Fprintf(os.Stderr, "  Kernel args: %s\n", kernelArgs)
-	fmt.Fprintf(os.Stderr, "  Initramfs: %s\n", config.InitramfsPath)
 
 	bootLoaderOpts := []vz.LinuxBootLoaderOption{
 		vz.WithCommandLine(kernelArgs),
@@ -98,6 +90,14 @@ func (b *DarwinBackend) Create(ctx context.Context, config *vm.VMConfig) (vm.Mac
 	}
 	vzConfig.SetSocketDevicesVirtualMachineConfiguration([]vz.SocketDeviceConfiguration{vsockConfig})
 
+	// Add entropy device for virtio random
+	entropyConfig, err := vz.NewVirtioEntropyDeviceConfiguration()
+	if err != nil {
+		socketPair.Close()
+		return nil, fmt.Errorf("failed to create entropy config: %w", err)
+	}
+	vzConfig.SetEntropyDevicesVirtualMachineConfiguration([]*vz.VirtioEntropyDeviceConfiguration{entropyConfig})
+
 	if err := b.configureConsole(vzConfig, config); err != nil {
 		socketPair.Close()
 		return nil, fmt.Errorf("failed to configure console: %w", err)
@@ -106,7 +106,7 @@ func (b *DarwinBackend) Create(ctx context.Context, config *vm.VMConfig) (vm.Mac
 	validated, err := vzConfig.Validate()
 	if err != nil || !validated {
 		socketPair.Close()
-		return nil, fmt.Errorf("VM configuration validation failed: %w", err)
+		return nil, fmt.Errorf("VM configuration validation failed: validated=%v, err=%w", validated, err)
 	}
 
 	vzVM, err := vz.NewVirtualMachine(vzConfig)
@@ -141,8 +141,9 @@ func (b *DarwinBackend) buildKernelArgs(config *vm.VMConfig) string {
 		workspace = "/workspace"
 	}
 
+	// Root device is /dev/vda (first virtio block device)
 	return fmt.Sprintf(
-		"console=hvc0 root=/dev/vda rw reboot=k panic=1 ip=%s::%s:255.255.255.0::eth0:off:8.8.8.8:8.8.4.4 matchlock.workspace=%s",
+		"console=hvc0 root=/dev/vda rw init=/init reboot=k panic=1 ip=%s::%s:255.255.255.0::eth0:off:8.8.8.8:8.8.4.4 matchlock.workspace=%s",
 		guestIP, gatewayIP, workspace,
 	)
 }
@@ -191,7 +192,7 @@ func (b *DarwinBackend) configureNetwork(vzConfig *vz.VirtualMachineConfiguratio
 }
 
 func (b *DarwinBackend) configureConsole(vzConfig *vz.VirtualMachineConfiguration, config *vm.VMConfig) error {
-	// Open /dev/null for reading and writing to create silent console
+	// Silent console - kernel output goes to /dev/null
 	nullRead, err := os.Open("/dev/null")
 	if err != nil {
 		return fmt.Errorf("failed to open /dev/null for reading: %w", err)

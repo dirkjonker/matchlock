@@ -262,6 +262,73 @@ Image variants:
 - `standard`: Python, Node.js, Git
 - `full`: Go, Rust, dev tools
 
+## macOS Setup (Apple Silicon)
+
+### Prerequisites
+- macOS 11+ (Big Sur or later) on Apple Silicon
+- Go 1.25+ with CGO enabled
+- Code signing with virtualization entitlement
+
+### Build & Sign CLI
+
+```bash
+# Build CLI
+go build -o bin/matchlock ./cmd/matchlock
+
+# Build guest binaries for ARM64 Linux
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ~/.cache/matchlock/guest-agent ./cmd/guest-agent
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ~/.cache/matchlock/guest-fused ./cmd/guest-fused
+
+# Sign with virtualization entitlement (required!)
+cat > matchlock.entitlements << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.virtualization</key>
+    <true/>
+</dict>
+</plist>
+EOF
+codesign --entitlements matchlock.entitlements -f -s - bin/matchlock
+```
+
+### Kernel & Rootfs
+
+The macOS backend requires:
+1. **ARM64 Linux kernel** (`~/.cache/matchlock/kernel-arm64`) - Built with virtio drivers as built-in (not modules)
+2. **ext4 rootfs** (`~/.cache/matchlock/rootfs.ext4`) - With guest-agent and guest-fused injected
+
+```bash
+# Build ARM64 kernel (cross-compile on Linux or use pre-built)
+./scripts/build-kernel.sh  # Outputs to ~/.cache/matchlock/kernel-arm64
+
+# Build rootfs via Lima (since macOS can't create ext4 directly)
+limactl start --name=rootfs-builder template://alpine
+limactl shell rootfs-builder -- sudo ./scripts/create-rootfs-lima.sh
+limactl copy rootfs-builder:/tmp/rootfs.ext4 ~/.cache/matchlock/rootfs.ext4
+limactl delete rootfs-builder
+```
+
+### Usage
+
+```bash
+# Run a command in the sandbox
+matchlock run echo 'Hello from macOS VM!'
+
+# With explicit rootfs path
+MATCHLOCK_ROOTFS=~/.cache/matchlock/rootfs.ext4 matchlock run uname -a
+
+# Interactive shell (requires terminal)
+matchlock run -it sh
+```
+
+### macOS-Specific Notes
+- Uses Apple Virtualization.framework via `github.com/Code-Hex/vz/v3`
+- Native virtio-vsock (no Unix socket CONNECT protocol like Firecracker)
+- Network interception uses gVisor userspace TCP/IP stack with socket pairs
+- Image builder (`matchlock build`) requires Linux (uses `mkfs.ext4`)
+
 ## Configuration
 
 ### Workspace Path
