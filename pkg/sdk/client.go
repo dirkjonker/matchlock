@@ -1,0 +1,318 @@
+// Package sdk provides a client for interacting with Matchlock sandboxes via JSON-RPC.
+//
+// Example usage:
+//
+//	client, err := sdk.NewClient(sdk.DefaultConfig())
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer client.Close()
+//
+//	vmID, err := client.Create(sdk.CreateOptions{
+//	    Image:    "standard",
+//	    CPUs:     1,
+//	    MemoryMB: 512,
+//	})
+//
+//	result, err := client.Exec("echo hello")
+//	fmt.Println(result.Stdout)
+package sdk
+
+import (
+	"bufio"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"sync"
+	"sync/atomic"
+)
+
+// Client is a Matchlock JSON-RPC client
+type Client struct {
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	stdout    *bufio.Reader
+	stderr    io.ReadCloser
+	requestID atomic.Uint64
+	vmID      string
+	mu        sync.Mutex
+	closed    bool
+}
+
+// Config holds client configuration
+type Config struct {
+	// BinaryPath is the path to the matchlock binary
+	BinaryPath string
+	// UseSudo runs matchlock with sudo (required for TAP devices)
+	UseSudo bool
+}
+
+// DefaultConfig returns the default client configuration
+func DefaultConfig() Config {
+	path := os.Getenv("MATCHLOCK_BIN")
+	if path == "" {
+		path = "matchlock"
+	}
+	return Config{
+		BinaryPath: path,
+		UseSudo:    true,
+	}
+}
+
+// NewClient creates a new Matchlock client and starts the RPC process
+func NewClient(cfg Config) (*Client, error) {
+	var cmd *exec.Cmd
+	if cfg.UseSudo {
+		cmd = exec.Command("sudo", cfg.BinaryPath, "--rpc")
+	} else {
+		cmd = exec.Command(cfg.BinaryPath, "--rpc")
+	}
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get stdin pipe: %w", err)
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start matchlock: %w", err)
+	}
+
+	return &Client{
+		cmd:    cmd,
+		stdin:  stdin,
+		stdout: bufio.NewReader(stdout),
+		stderr: stderr,
+	}, nil
+}
+
+// VMID returns the ID of the current VM, or empty string if none created
+func (c *Client) VMID() string {
+	return c.vmID
+}
+
+// Close closes the sandbox and cleans up resources
+func (c *Client) Close() error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	c.mu.Unlock()
+
+	// Try to close the VM gracefully
+	c.sendRequest("close", nil)
+
+	c.stdin.Close()
+	return c.cmd.Wait()
+}
+
+// CreateOptions holds options for creating a sandbox
+type CreateOptions struct {
+	// Image is the rootfs image variant (minimal, standard, full)
+	Image string
+	// CPUs is the number of vCPUs
+	CPUs int
+	// MemoryMB is the memory in megabytes
+	MemoryMB int
+	// TimeoutSeconds is the maximum execution time
+	TimeoutSeconds int
+	// AllowedHosts is a list of allowed network hosts (supports wildcards)
+	AllowedHosts []string
+	// BlockPrivateIPs blocks access to private IP ranges
+	BlockPrivateIPs bool
+	// Mounts defines VFS mount configurations
+	Mounts map[string]MountConfig
+}
+
+// MountConfig defines a VFS mount
+type MountConfig struct {
+	Type     string `json:"type"`               // memory, real_fs, overlay
+	HostPath string `json:"host_path,omitempty"`
+	Readonly bool   `json:"readonly,omitempty"`
+}
+
+// Create creates and starts a new sandbox VM
+func (c *Client) Create(opts CreateOptions) (string, error) {
+	if opts.Image == "" {
+		opts.Image = "standard"
+	}
+	if opts.CPUs == 0 {
+		opts.CPUs = 1
+	}
+	if opts.MemoryMB == 0 {
+		opts.MemoryMB = 512
+	}
+	if opts.TimeoutSeconds == 0 {
+		opts.TimeoutSeconds = 300
+	}
+
+	params := map[string]interface{}{
+		"image": opts.Image,
+		"resources": map[string]interface{}{
+			"cpus":            opts.CPUs,
+			"memory_mb":       opts.MemoryMB,
+			"timeout_seconds": opts.TimeoutSeconds,
+		},
+	}
+
+	if len(opts.AllowedHosts) > 0 || opts.BlockPrivateIPs {
+		params["network"] = map[string]interface{}{
+			"allowed_hosts":     opts.AllowedHosts,
+			"block_private_ips": opts.BlockPrivateIPs,
+		}
+	}
+
+	if len(opts.Mounts) > 0 {
+		params["vfs"] = map[string]interface{}{
+			"mounts": opts.Mounts,
+		}
+	}
+
+	result, err := c.sendRequest("create", params)
+	if err != nil {
+		return "", err
+	}
+
+	var createResult struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(result, &createResult); err != nil {
+		return "", fmt.Errorf("failed to parse create result: %w", err)
+	}
+
+	c.vmID = createResult.ID
+	return c.vmID, nil
+}
+
+// ExecResult holds the result of command execution
+type ExecResult struct {
+	// ExitCode is the command's exit code
+	ExitCode int
+	// Stdout is the standard output
+	Stdout string
+	// Stderr is the standard error
+	Stderr string
+	// DurationMS is the execution time in milliseconds
+	DurationMS int64
+}
+
+// Exec executes a command in the sandbox
+func (c *Client) Exec(command string) (*ExecResult, error) {
+	return c.ExecWithDir(command, "")
+}
+
+// ExecWithDir executes a command in the sandbox with a working directory
+func (c *Client) ExecWithDir(command, workingDir string) (*ExecResult, error) {
+	params := map[string]string{
+		"command": command,
+	}
+	if workingDir != "" {
+		params["working_dir"] = workingDir
+	}
+
+	result, err := c.sendRequest("exec", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var execResult struct {
+		ExitCode   int    `json:"exit_code"`
+		Stdout     string `json:"stdout"`
+		Stderr     string `json:"stderr"`
+		DurationMS int64  `json:"duration_ms"`
+	}
+	if err := json.Unmarshal(result, &execResult); err != nil {
+		return nil, fmt.Errorf("failed to parse exec result: %w", err)
+	}
+
+	stdout, _ := base64.StdEncoding.DecodeString(execResult.Stdout)
+	stderr, _ := base64.StdEncoding.DecodeString(execResult.Stderr)
+
+	return &ExecResult{
+		ExitCode:   execResult.ExitCode,
+		Stdout:     string(stdout),
+		Stderr:     string(stderr),
+		DurationMS: execResult.DurationMS,
+	}, nil
+}
+
+// WriteFile writes content to a file in the sandbox
+func (c *Client) WriteFile(path string, content []byte) error {
+	return c.WriteFileMode(path, content, 0644)
+}
+
+// WriteFileMode writes content to a file with specific permissions
+func (c *Client) WriteFileMode(path string, content []byte, mode uint32) error {
+	params := map[string]interface{}{
+		"path":    path,
+		"content": base64.StdEncoding.EncodeToString(content),
+		"mode":    mode,
+	}
+
+	_, err := c.sendRequest("write_file", params)
+	return err
+}
+
+// ReadFile reads a file from the sandbox
+func (c *Client) ReadFile(path string) ([]byte, error) {
+	params := map[string]string{
+		"path": path,
+	}
+
+	result, err := c.sendRequest("read_file", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var readResult struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(result, &readResult); err != nil {
+		return nil, fmt.Errorf("failed to parse read result: %w", err)
+	}
+
+	return base64.StdEncoding.DecodeString(readResult.Content)
+}
+
+// FileInfo holds file metadata
+type FileInfo struct {
+	Name  string `json:"name"`
+	Size  int64  `json:"size"`
+	Mode  uint32 `json:"mode"`
+	IsDir bool   `json:"is_dir"`
+}
+
+// ListFiles lists files in a directory
+func (c *Client) ListFiles(path string) ([]FileInfo, error) {
+	params := map[string]string{
+		"path": path,
+	}
+
+	result, err := c.sendRequest("list_files", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var listResult struct {
+		Files []FileInfo `json:"files"`
+	}
+	if err := json.Unmarshal(result, &listResult); err != nil {
+		return nil, fmt.Errorf("failed to parse list result: %w", err)
+	}
+
+	return listResult.Files, nil
+}
