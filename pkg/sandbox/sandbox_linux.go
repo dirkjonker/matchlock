@@ -224,12 +224,12 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 	var caInjector *sandboxnet.CAInjector
 	if proxy != nil {
 		caInjector = sandboxnet.NewCAInjector(proxy.CAPool())
-		if mp, ok := vfsProviders[workspace].(*vfs.MemoryProvider); ok {
-			if err := mp.WriteFile("/.sandbox-ca.crt", caInjector.CACertPEM(), 0644); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to write CA cert: %v\n", err)
-			}
+		caCertPath := workspace + "/.sandbox-ca.crt"
+		if h, err := vfsRoot.Create(caCertPath, 0644); err == nil {
+			h.Write(caInjector.CACertPEM())
+			h.Close()
 		} else {
-			fmt.Fprintf(os.Stderr, "Warning: %s is not a MemoryProvider, CA cert not written\n", workspace)
+			fmt.Fprintf(os.Stderr, "Warning: failed to write CA cert: %v\n", err)
 		}
 	}
 
