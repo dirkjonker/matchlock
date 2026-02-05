@@ -4,7 +4,7 @@ set -e
 # Download pre-built rootfs from Firecracker's CI artifacts
 # For quick testing without building
 
-OUTPUT_DIR="${OUTPUT_DIR:-/opt/sandbox}"
+OUTPUT_DIR="${OUTPUT_DIR:-$HOME/.cache/matchlock}"
 
 echo "Downloading pre-built Firecracker rootfs..."
 

@@ -1,13 +1,13 @@
 # Matchlock Makefile
 
 # Configuration
-KERNEL_VERSION ?= 6.1.94
-OUTPUT_DIR ?= /opt/sandbox
+KERNEL_VERSION ?= 6.6.122
+OUTPUT_DIR ?= ~/.cache/matchlock
 IMAGE ?= standard
 GO ?= go
 
 # Binary names
-SANDBOX_BIN = bin/sandbox
+MATCHLOCK_BIN = bin/matchlock
 GUEST_AGENT_BIN = bin/guest-agent
 GUEST_FUSED_BIN = bin/guest-fused
 
@@ -20,14 +20,14 @@ all: build
 # =============================================================================
 
 .PHONY: build
-build: $(SANDBOX_BIN)
+build: $(MATCHLOCK_BIN)
 
 .PHONY: build-all
-build-all: $(SANDBOX_BIN) $(GUEST_AGENT_BIN) $(GUEST_FUSED_BIN)
+build-all: $(MATCHLOCK_BIN) $(GUEST_AGENT_BIN) $(GUEST_FUSED_BIN)
 
-$(SANDBOX_BIN): $(shell find . -name '*.go' -not -path './cmd/guest-*')
+$(MATCHLOCK_BIN): $(shell find . -name '*.go' -not -path './cmd/guest-*')
 	@mkdir -p bin
-	$(GO) build -o $@ ./cmd/sandbox
+	$(GO) build -o $@ ./cmd/matchlock
 
 $(GUEST_AGENT_BIN): cmd/guest-agent/main.go
 	@mkdir -p bin
@@ -128,10 +128,10 @@ install-firecracker:
 	@./scripts/install-firecracker.sh
 
 .PHONY: install
-install: $(SANDBOX_BIN)
-	@echo "Installing sandbox to /usr/local/bin..."
-	sudo cp $(SANDBOX_BIN) /usr/local/bin/sandbox
-	@echo "Installed. Run 'sandbox --help' to get started."
+install: $(MATCHLOCK_BIN)
+	@echo "Installing matchlock to /usr/local/bin..."
+	sudo cp $(MATCHLOCK_BIN) /usr/local/bin/matchlock
+	@echo "Installed. Run 'matchlock --help' to get started."
 
 .PHONY: install-images
 install-images:
@@ -170,20 +170,20 @@ setup: install-firecracker images install
 	@echo "============================================"
 	@echo ""
 	@echo "Environment variables (add to ~/.bashrc):"
-	@echo "  export SANDBOX_KERNEL=$(OUTPUT_DIR)/kernel"
-	@echo "  export SANDBOX_ROOTFS=$(OUTPUT_DIR)/rootfs-standard.ext4"
+	@echo "  export MATCHLOCK_KERNEL=$(OUTPUT_DIR)/kernel"
+	@echo "  export MATCHLOCK_ROOTFS=$(OUTPUT_DIR)/rootfs-standard.ext4"
 	@echo ""
 	@echo "Test with:"
-	@echo "  sudo sandbox run echo 'Hello from sandbox'"
+	@echo "  sudo matchlock run echo 'Hello from matchlock'"
 	@echo ""
 
 .PHONY: quick-test
 quick-test: build
 	@echo "Running quick test..."
 	@if [ -f $(OUTPUT_DIR)/kernel ] && [ -f $(OUTPUT_DIR)/rootfs-standard.ext4 ]; then \
-		echo "Images found, testing sandbox..."; \
-		sudo SANDBOX_KERNEL=$(OUTPUT_DIR)/kernel SANDBOX_ROOTFS=$(OUTPUT_DIR)/rootfs-standard.ext4 \
-			./$(SANDBOX_BIN) run echo "Sandbox works!"; \
+		echo "Images found, testing matchlock..."; \
+		sudo MATCHLOCK_KERNEL=$(OUTPUT_DIR)/kernel MATCHLOCK_ROOTFS=$(OUTPUT_DIR)/rootfs-standard.ext4 \
+			./$(MATCHLOCK_BIN) run echo "Matchlock works!"; \
 	else \
 		echo "Images not found. Run 'make images' first."; \
 		exit 1; \
@@ -198,7 +198,7 @@ help:
 	@echo "Matchlock Build System"
 	@echo ""
 	@echo "Build targets:"
-	@echo "  make build          Build the sandbox CLI"
+	@echo "  make build          Build the matchlock CLI"
 	@echo "  make build-all      Build CLI and guest binaries"
 	@echo "  make clean          Remove built binaries"
 	@echo ""
@@ -224,7 +224,7 @@ help:
 	@echo ""
 	@echo "Installation targets:"
 	@echo "  make install-firecracker  Install Firecracker binary"
-	@echo "  make install              Install sandbox to /usr/local/bin"
+	@echo "  make install              Install matchlock to /usr/local/bin"
 	@echo "  make setup                Full setup (firecracker + images + install)"
 	@echo ""
 	@echo "Configuration:"
@@ -235,4 +235,4 @@ help:
 	@echo "Examples:"
 	@echo "  make images OUTPUT_DIR=./local-images"
 	@echo "  make rootfs IMAGE=full"
-	@echo "  make kernel KERNEL_VERSION=6.6.30"
+	@echo "  make kernel KERNEL_VERSION=6.6.122"

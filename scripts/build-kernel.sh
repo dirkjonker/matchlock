@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-KERNEL_VERSION="${KERNEL_VERSION:-6.1.94}"
-OUTPUT_DIR="${OUTPUT_DIR:-/opt/sandbox}"
+KERNEL_VERSION="${KERNEL_VERSION:-6.6.122}"
+OUTPUT_DIR="${OUTPUT_DIR:-$HOME/.cache/matchlock}"
 BUILD_DIR="${BUILD_DIR:-/tmp/kernel-build}"
 
 echo "Building Linux kernel $KERNEL_VERSION for Firecracker..."

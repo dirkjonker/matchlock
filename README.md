@@ -110,8 +110,8 @@ make help           # Show all targets
 Environment variables:
 
 ```bash
-export SANDBOX_KERNEL=/opt/sandbox/kernel
-export SANDBOX_ROOTFS=/opt/sandbox/rootfs-standard.ext4
+export MATCHLOCK_KERNEL=~/.cache/matchlock/kernel
+export MATCHLOCK_ROOTFS=~/.cache/matchlock/rootfs-standard.ext4
 ```
 
 ## Project Structure

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -517,10 +518,10 @@ func createProvider(mount api.MountConfig) vfs.Provider {
 }
 
 func getKernelPath() string {
+	home, _ := os.UserHomeDir()
 	paths := []string{
-		os.Getenv("SANDBOX_KERNEL"),
-		"/opt/sandbox/kernel",
-		"~/.sandbox/cache/kernel",
+		os.Getenv("MATCHLOCK_KERNEL"),
+		filepath.Join(home, ".cache/matchlock/kernel"),
 	}
 	for _, p := range paths {
 		if p != "" {
@@ -529,17 +530,17 @@ func getKernelPath() string {
 			}
 		}
 	}
-	return "/opt/sandbox/kernel"
+	return filepath.Join(home, ".cache/matchlock/kernel")
 }
 
 func getRootfsPath(image string) string {
 	if image == "" {
 		image = "standard"
 	}
+	home, _ := os.UserHomeDir()
 	paths := []string{
-		os.Getenv("SANDBOX_ROOTFS"),
-		fmt.Sprintf("/opt/sandbox/rootfs-%s.ext4", image),
-		fmt.Sprintf("~/.sandbox/cache/rootfs-%s.ext4", image),
+		os.Getenv("MATCHLOCK_ROOTFS"),
+		filepath.Join(home, ".cache/matchlock", fmt.Sprintf("rootfs-%s.ext4", image)),
 	}
 	for _, p := range paths {
 		if p != "" {
@@ -548,5 +549,5 @@ func getRootfsPath(image string) string {
 			}
 		}
 	}
-	return fmt.Sprintf("/opt/sandbox/rootfs-%s.ext4", image)
+	return filepath.Join(home, ".cache/matchlock", fmt.Sprintf("rootfs-%s.ext4", image))
 }

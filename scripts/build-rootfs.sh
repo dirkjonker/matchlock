@@ -2,7 +2,7 @@
 set -e
 
 IMAGE="${IMAGE:-standard}"
-OUTPUT_DIR="${OUTPUT_DIR:-/opt/sandbox}"
+OUTPUT_DIR="${OUTPUT_DIR:-$HOME/.cache/matchlock}"
 BUILD_DIR="${BUILD_DIR:-/tmp/rootfs-build}"
 ROOTFS_SIZE="${ROOTFS_SIZE:-512M}"
 

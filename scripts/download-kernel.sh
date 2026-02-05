@@ -4,14 +4,13 @@ set -e
 # Download pre-built kernel from Firecracker's CI artifacts
 # This is faster than building from source
 
-OUTPUT_DIR="${OUTPUT_DIR:-/opt/sandbox}"
-KERNEL_VERSION="${KERNEL_VERSION:-5.10}"
+OUTPUT_DIR="${OUTPUT_DIR:-$HOME/.cache/matchlock}"
 
-echo "Downloading pre-built Firecracker kernel..."
+echo "Downloading pre-built Firecracker kernel (6.1)..."
 
 mkdir -p "$OUTPUT_DIR"
 
-# Firecracker provides pre-built kernels
+# Firecracker provides pre-built kernels (6.1 series)
 # These are maintained by the Firecracker team
 KERNEL_URL="https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/x86_64/kernels/vmlinux.bin"
 

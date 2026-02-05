@@ -15,7 +15,7 @@ A lightweight micro-VM sandbox for running AI-generated code securely with netwo
 ```
 matchlock/
 ├── cmd/
-│   ├── sandbox/          # CLI entrypoint
+│   ├── matchlock/        # CLI entrypoint
 │   ├── guest-agent/      # In-VM agent for command execution
 │   └── guest-fused/      # In-VM FUSE daemon for VFS
 ├── pkg/
@@ -39,7 +39,7 @@ matchlock/
 go build ./...
 
 # Build CLI binary
-go build -o bin/sandbox ./cmd/sandbox
+go build -o bin/matchlock ./cmd/matchlock
 
 # Build guest binaries (static for rootfs)
 CGO_ENABLED=0 go build -o bin/guest-agent ./cmd/guest-agent
@@ -62,19 +62,19 @@ sudo ./scripts/build-rootfs.sh
 
 ```bash
 # Run a command in sandbox
-sandbox run python script.py
+matchlock run python script.py
 
 # With network allowlist
-sandbox run --allow-host "api.openai.com" python agent.py
+matchlock run --allow-host "api.openai.com" python agent.py
 
 # List sandboxes
-sandbox list
+matchlock list
 
 # Kill a sandbox
-sandbox kill vm-abc123
+matchlock kill vm-abc123
 
 # RPC mode (for programmatic access)
-sandbox --rpc
+matchlock --rpc
 ```
 
 ## Key Components
@@ -131,8 +131,8 @@ sandbox --rpc
 
 ## Environment Variables
 
-- `SANDBOX_KERNEL`: Path to kernel image
-- `SANDBOX_ROOTFS`: Path to rootfs image
+- `MATCHLOCK_KERNEL`: Path to kernel image
+- `MATCHLOCK_ROOTFS`: Path to rootfs image
 
 ## JSON-RPC Methods
 
@@ -164,7 +164,7 @@ NODE_EXTRA_CA_CERTS=/etc/ssl/certs/sandbox-ca.crt
 Requirements: gcc, make, kernel headers, wget
 
 ```bash
-KERNEL_VERSION=6.1.94 OUTPUT_DIR=/opt/sandbox ./scripts/build-kernel.sh
+KERNEL_VERSION=6.6.122 OUTPUT_DIR=~/.cache/matchlock ./scripts/build-kernel.sh
 ```
 
 Enables: virtio-net, virtio-vsock, FUSE, ext4
@@ -174,7 +174,7 @@ Enables: virtio-net, virtio-vsock, FUSE, ext4
 Requirements: root, apk (Alpine package manager)
 
 ```bash
-IMAGE=standard OUTPUT_DIR=/opt/sandbox sudo ./scripts/build-rootfs.sh
+IMAGE=standard OUTPUT_DIR=~/.cache/matchlock sudo ./scripts/build-rootfs.sh
 ```
 
 Image variants:

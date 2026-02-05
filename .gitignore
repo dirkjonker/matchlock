@@ -30,7 +30,6 @@ coverage.txt
 Thumbs.db
 
 # Build artifacts
-/opt/sandbox/
 *.img
 *.ext4
 vmlinux

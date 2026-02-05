@@ -114,9 +114,9 @@ The kernel must be built with specific options for Firecracker compatibility.
 ```bash
 cd /path/to/matchlock
 
-# Build with defaults (kernel 6.1.94, output to /opt/sandbox)
-sudo mkdir -p /opt/sandbox
-sudo chown $USER:$USER /opt/sandbox
+# Build with defaults (kernel 6.6.122, output to ~/.cache/matchlock)
+sudo mkdir -p ~/.cache/matchlock
+sudo chown $USER:$USER ~/.cache/matchlock
 ./scripts/build-kernel.sh
 ```
 
@@ -124,15 +124,15 @@ sudo chown $USER:$USER /opt/sandbox
 
 ```bash
 # Specify version and output directory
-KERNEL_VERSION=6.6.30 OUTPUT_DIR=./images ./scripts/build-kernel.sh
+KERNEL_VERSION=6.6.122 OUTPUT_DIR=./images ./scripts/build-kernel.sh
 ```
 
 ### Build Options
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KERNEL_VERSION` | 6.1.94 | Linux kernel version |
-| `OUTPUT_DIR` | /opt/sandbox | Output directory for kernel |
+| `KERNEL_VERSION` | 6.6.122 | Linux kernel version |
+| `OUTPUT_DIR` | ~/.cache/matchlock | Output directory for kernel |
 | `BUILD_DIR` | /tmp/kernel-build | Temporary build directory |
 
 ### Kernel Configuration
@@ -151,12 +151,12 @@ Unnecessary features are disabled (modules, USB, sound, wireless, etc.) to minim
 ### Expected Output
 
 ```
-Building Linux kernel 6.1.94 for Firecracker...
+Building Linux kernel 6.6.122 for Firecracker...
 Downloading kernel source...
 Extracting kernel source...
 Configuring kernel for Firecracker...
 [build output...]
-Kernel built successfully: /opt/sandbox/kernel
+Kernel built successfully: ~/.cache/matchlock/kernel
 Size: 12M
 ```
 
@@ -178,7 +178,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/guest-fused ./cmd/guest-f
 
 ```bash
 # Build standard image (Python, Node.js, Git)
-sudo IMAGE=standard OUTPUT_DIR=/opt/sandbox ./scripts/build-rootfs.sh
+sudo IMAGE=standard OUTPUT_DIR=~/.cache/matchlock ./scripts/build-rootfs.sh
 ```
 
 ### Image Variants
@@ -194,7 +194,7 @@ sudo IMAGE=standard OUTPUT_DIR=/opt/sandbox ./scripts/build-rootfs.sh
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `IMAGE` | standard | Image variant |
-| `OUTPUT_DIR` | /opt/sandbox | Output directory |
+| `OUTPUT_DIR` | ~/.cache/matchlock | Output directory |
 | `BUILD_DIR` | /tmp/rootfs-build | Temporary build directory |
 | `ROOTFS_SIZE` | 512M | Image size |
 
@@ -218,7 +218,7 @@ Installing Alpine Linux base...
 Installing standard packages...
 Configuring system...
 Installing guest agent...
-Rootfs built successfully: /opt/sandbox/rootfs-standard.ext4
+Rootfs built successfully: ~/.cache/matchlock/rootfs-standard.ext4
 Size: 180M
 ```
 
@@ -233,7 +233,7 @@ cat > build-rootfs-docker.sh << 'EOF'
 docker run --rm --privileged \
     -v /tmp:/tmp \
     -v $(pwd)/scripts:/scripts:ro \
-    -v /opt/sandbox:/opt/sandbox \
+    -v ~/.cache/matchlock:~/.cache/matchlock \
     alpine:3.19 \
     sh -c "apk add --no-cache bash e2fsprogs && /scripts/build-rootfs.sh"
 EOF
@@ -252,7 +252,7 @@ sudo ./build-rootfs-docker.sh
 ### Check Files
 
 ```bash
-ls -la /opt/sandbox/
+ls -la ~/.cache/matchlock/
 # Should show:
 # - kernel (vmlinux, ~12MB)
 # - rootfs-standard.ext4 (~180MB)
@@ -265,12 +265,12 @@ ls -la /opt/sandbox/
 cat > /tmp/fc-config.json << EOF
 {
   "boot-source": {
-    "kernel_image_path": "/opt/sandbox/kernel",
+    "kernel_image_path": "~/.cache/matchlock/kernel",
     "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
   },
   "drives": [{
     "drive_id": "rootfs",
-    "path_on_host": "/opt/sandbox/rootfs-standard.ext4",
+    "path_on_host": "~/.cache/matchlock/rootfs-standard.ext4",
     "is_root_device": true,
     "is_read_only": false
   }],
@@ -293,14 +293,14 @@ firecracker --api-sock /tmp/fc.sock --config-file /tmp/fc-config.json
 
 ```bash
 # Build the sandbox CLI
-go build -o bin/sandbox ./cmd/sandbox
+go build -o bin/matchlock ./cmd/matchlock
 
 # Set environment variables
-export SANDBOX_KERNEL=/opt/sandbox/kernel
-export SANDBOX_ROOTFS=/opt/sandbox/rootfs-standard.ext4
+export MATCHLOCK_KERNEL=~/.cache/matchlock/kernel
+export MATCHLOCK_ROOTFS=~/.cache/matchlock/rootfs-standard.ext4
 
 # Run a command (requires root for TAP devices)
-sudo -E ./bin/sandbox run echo "Hello from sandbox"
+sudo -E ./bin/matchlock run echo "Hello from matchlock"
 ```
 
 ## 6. Environment Configuration
@@ -309,8 +309,8 @@ sudo -E ./bin/sandbox run echo "Hello from sandbox"
 
 ```bash
 # Add to /etc/environment or ~/.bashrc
-export SANDBOX_KERNEL=/opt/sandbox/kernel
-export SANDBOX_ROOTFS=/opt/sandbox/rootfs-standard.ext4
+export MATCHLOCK_KERNEL=~/.cache/matchlock/kernel
+export MATCHLOCK_ROOTFS=~/.cache/matchlock/rootfs-standard.ext4
 ```
 
 ### Capabilities (Alternative to Root)
@@ -319,7 +319,7 @@ Instead of running as root, grant capabilities:
 
 ```bash
 # Allow TAP device creation
-sudo setcap cap_net_admin+ep ./bin/sandbox
+sudo setcap cap_net_admin+ep ./bin/matchlock
 
 # Note: Firecracker itself may still need /dev/kvm access
 ```
@@ -367,7 +367,7 @@ sudo mknod -m 0660 /dev/loop8 b 7 8
 
 ```bash
 # Check guest-agent binary is in rootfs
-sudo mount -o loop /opt/sandbox/rootfs-standard.ext4 /mnt
+sudo mount -o loop ~/.cache/matchlock/rootfs-standard.ext4 /mnt
 ls -la /mnt/usr/local/bin/
 # Should show guest-agent and guest-fused
 sudo umount /mnt
@@ -393,7 +393,7 @@ firecracker --api-sock /tmp/fc.sock --config-file config.json 2>&1 | tee fc.log
 After setup, your installation should look like:
 
 ```
-/opt/sandbox/
+~/.cache/matchlock/
 ├── kernel                    # Linux kernel (vmlinux)
 ├── rootfs-minimal.ext4       # Minimal rootfs (optional)
 ├── rootfs-standard.ext4      # Standard rootfs
@@ -411,6 +411,6 @@ After setup, your installation should look like:
 ## Next Steps
 
 1. **Run Tests**: `go test ./...`
-2. **Build CLI**: `go build -o bin/sandbox ./cmd/sandbox`
+2. **Build CLI**: `go build -o bin/matchlock ./cmd/matchlock`
 3. **Try Examples**: See [EXAMPLES.md](EXAMPLES.md)
 4. **Read Architecture**: See [ARCHITECTURE.md](ARCHITECTURE.md)
