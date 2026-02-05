@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,6 +11,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"golang.org/x/term"
 
 	"github.com/jingkaihe/matchlock/pkg/api"
@@ -22,13 +23,10 @@ import (
 	"github.com/jingkaihe/matchlock/pkg/vm"
 )
 
-// shellQuoteArgs properly quotes arguments for shell execution
 func shellQuoteArgs(args []string) string {
 	quoted := make([]string, len(args))
 	for i, arg := range args {
-		// If arg contains special shell characters, quote it
 		if strings.ContainsAny(arg, " \t\n\"'`$\\!*?[]{}();<>&|") {
-			// Use single quotes and escape any single quotes in the arg
 			quoted[i] = "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
 		} else {
 			quoted[i] = arg
@@ -37,79 +35,27 @@ func shellQuoteArgs(args []string) string {
 	return strings.Join(quoted, " ")
 }
 
-func main() {
-	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
-	}
-
-	switch os.Args[1] {
-	case "run":
-		cmdRun(os.Args[2:])
-	case "build":
-		cmdBuild(os.Args[2:])
-	case "list":
-		cmdList(os.Args[2:])
-	case "get":
-		cmdGet(os.Args[2:])
-	case "kill":
-		cmdKill(os.Args[2:])
-	case "rm":
-		cmdRemove(os.Args[2:])
-	case "prune":
-		cmdPrune(os.Args[2:])
-	case "--rpc":
-		cmdRPC(os.Args[2:])
-	case "help", "-h", "--help":
-		printUsage()
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", os.Args[1])
-		printUsage()
-		os.Exit(1)
-	}
+var rootCmd = &cobra.Command{
+	Use:   "matchlock",
+	Short: "A lightweight micro-VM sandbox for running llm agent securely",
+	Long: `Matchlock is a lightweight micro-VM sandbox for running llm agent
+securely with network interception and secret protection.`,
 }
 
-func printUsage() {
-	fmt.Println(`Usage: matchlock <command> [options]
-
-Commands:
-  run <command>     Run a command in a new sandbox
-  build <image>     Build rootfs from container image (e.g., alpine:latest)
-  list              List all sandboxes
-  get <id>          Get details of a sandbox
-  kill <id>         Kill a running sandbox
-  rm <id>           Remove a stopped sandbox
-  prune             Remove all stopped sandboxes
-  --rpc             Run in RPC mode (for programmatic access)
-
-Run Options:
-  -it                    Interactive mode with TTY (like docker -it)
-  --image <image>        Container image (required, e.g., alpine:latest, python:3.12-alpine)
-  --workspace <path>     Guest VFS mount point (default: /workspace)
-  --allow-host <host>    Add host to allowlist (can be repeated, supports wildcards)
-  --secret <spec>        Inject secret via MITM proxy (can be repeated, see below)
-  -v <host:guest[:ro]>   Mount host directory into sandbox (can be repeated)
-  --cpus <n>             Number of CPUs
-  --memory <mb>          Memory in MB
-  --timeout <s>          Timeout in seconds
-
-Build Options:
-  --guest-agent <path>   Path to guest-agent binary
-  --guest-fused <path>   Path to guest-fused binary
+var runCmd = &cobra.Command{
+	Use:   "run [flags] -- <command>",
+	Short: "Run a command in a new sandbox",
+	Long: `Run a command in a new sandbox.
 
 Secrets (--secret):
   Secrets are injected via MITM proxy - the real value never enters the VM.
   The VM sees a placeholder, which is replaced with the real value in HTTP headers.
-  
+
   Formats:
     NAME=VALUE@host1,host2     Inline secret value for specified hosts
     NAME@host1,host2           Read secret from $NAME environment variable
-  
+
   Note: When using sudo, env vars are not preserved. Use 'sudo -E' or pass inline.
-  
-  Examples:
-    --secret OPENAI_API_KEY@api.openai.com
-    --secret "API_KEY=sk-xxx@api.example.com,api2.example.com"
 
 Volume Mounts (-v):
   Guest paths are relative to workspace (or use full workspace paths):
@@ -120,53 +66,136 @@ Volume Mounts (-v):
 Wildcard Patterns for --allow-host:
   *                      Allow all hosts
   *.example.com          Allow all subdomains (api.example.com, a.b.example.com)
-  api-*.example.com      Allow pattern match (api-v1.example.com, api-prod.example.com)
-
-Examples:
-  matchlock build alpine:latest                          # Build from Alpine
-  matchlock run --image alpine:latest -it sh             # Interactive shell
+  api-*.example.com      Allow pattern match (api-v1.example.com, api-prod.example.com)`,
+	Example: `  matchlock run --image alpine:latest -it sh
   matchlock run --image python:3.12-alpine python3 -c 'print(42)'
 
   # With secrets (MITM replaces placeholder in HTTP requests)
   export ANTHROPIC_API_KEY=sk-xxx
   matchlock run --image python:3.12-alpine \
     --secret ANTHROPIC_API_KEY@api.anthropic.com \
-    python call_api.py
-
-  matchlock list
-  matchlock kill vm-abc123`)
+    python call_api.py`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: runRun,
 }
 
-func cmdRun(args []string) {
-	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	imageFlag := fs.String("image", "", "Container image (required)")
-	cpus := fs.Int("cpus", 1, "Number of CPUs")
-	memory := fs.Int("memory", 512, "Memory in MB")
-	timeout := fs.Int("timeout", 300, "Timeout in seconds")
-	interactive := fs.Bool("it", false, "Interactive mode with TTY")
-	workspace := fs.String("workspace", api.DefaultWorkspace, "Guest mount point for VFS")
-	var allowHosts stringSlice
-	fs.Var(&allowHosts, "allow-host", "Allowed hosts")
-	var volumes stringSlice
-	fs.Var(&volumes, "v", "Volume mount (host:guest or host:guest:ro)")
-	var secrets stringSlice
-	fs.Var(&secrets, "secret", "Secret (NAME=VALUE@host1,host2 or NAME@host1,host2 to read from env)")
+var buildCmd = &cobra.Command{
+	Use:     "build <image>",
+	Short:   "Build rootfs from container image",
+	Example: `  matchlock build alpine:latest`,
+	Args:    cobra.ExactArgs(1),
+	RunE:    runBuild,
+}
 
-	fs.Parse(args)
+var listCmd = &cobra.Command{
+	Use:     "list",
+	Aliases: []string{"ls"},
+	Short:   "List all sandboxes",
+	RunE:    runList,
+}
 
-	if *imageFlag == "" {
-		fmt.Fprintln(os.Stderr, "Error: --image is required (e.g., --image alpine:latest)")
+var getCmd = &cobra.Command{
+	Use:   "get <id>",
+	Short: "Get details of a sandbox",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runGet,
+}
+
+var killCmd = &cobra.Command{
+	Use:   "kill <id>",
+	Short: "Kill a running sandbox",
+	RunE:  runKill,
+}
+
+var rmCmd = &cobra.Command{
+	Use:     "rm <id>",
+	Aliases: []string{"remove"},
+	Short:   "Remove a stopped sandbox",
+	RunE:    runRemove,
+}
+
+var pruneCmd = &cobra.Command{
+	Use:   "prune",
+	Short: "Remove all stopped sandboxes",
+	RunE:  runPrune,
+}
+
+var rpcCmd = &cobra.Command{
+	Use:   "rpc",
+	Short: "Run in RPC mode (for programmatic access)",
+	RunE:  runRPC,
+}
+
+func init() {
+	runCmd.Flags().StringP("image", "i", "", "Container image (required)")
+	runCmd.Flags().String("workspace", api.DefaultWorkspace, "Guest mount point for VFS")
+	runCmd.Flags().StringSlice("allow-host", nil, "Allowed hosts (can be repeated)")
+	runCmd.Flags().StringSliceP("volume", "v", nil, "Volume mount (host:guest or host:guest:ro)")
+	runCmd.Flags().StringSlice("secret", nil, "Secret (NAME=VALUE@host1,host2 or NAME@host1,host2)")
+	runCmd.Flags().Int("cpus", 1, "Number of CPUs")
+	runCmd.Flags().Int("memory", 512, "Memory in MB")
+	runCmd.Flags().Int("timeout", 300, "Timeout in seconds")
+	runCmd.Flags().BoolP("interactive", "t", false, "Interactive mode with TTY (use -it)")
+	runCmd.MarkFlagRequired("image")
+
+	viper.BindPFlag("run.image", runCmd.Flags().Lookup("image"))
+	viper.BindPFlag("run.workspace", runCmd.Flags().Lookup("workspace"))
+	viper.BindPFlag("run.allow-host", runCmd.Flags().Lookup("allow-host"))
+	viper.BindPFlag("run.volume", runCmd.Flags().Lookup("volume"))
+	viper.BindPFlag("run.secret", runCmd.Flags().Lookup("secret"))
+	viper.BindPFlag("run.cpus", runCmd.Flags().Lookup("cpus"))
+	viper.BindPFlag("run.memory", runCmd.Flags().Lookup("memory"))
+	viper.BindPFlag("run.timeout", runCmd.Flags().Lookup("timeout"))
+	viper.BindPFlag("run.interactive", runCmd.Flags().Lookup("interactive"))
+
+	buildCmd.Flags().String("guest-agent", "", "Path to guest-agent binary")
+	buildCmd.Flags().String("guest-fused", "", "Path to guest-fused binary")
+	viper.BindPFlag("build.guest-agent", buildCmd.Flags().Lookup("guest-agent"))
+	viper.BindPFlag("build.guest-fused", buildCmd.Flags().Lookup("guest-fused"))
+
+	listCmd.Flags().Bool("running", false, "Show only running VMs")
+	viper.BindPFlag("list.running", listCmd.Flags().Lookup("running"))
+
+	killCmd.Flags().Bool("all", false, "Kill all running VMs")
+	viper.BindPFlag("kill.all", killCmd.Flags().Lookup("all"))
+
+	rmCmd.Flags().Bool("stopped", false, "Remove all stopped VMs")
+	viper.BindPFlag("rm.stopped", rmCmd.Flags().Lookup("stopped"))
+
+	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(buildCmd)
+	rootCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(getCmd)
+	rootCmd.AddCommand(killCmd)
+	rootCmd.AddCommand(rmCmd)
+	rootCmd.AddCommand(pruneCmd)
+	rootCmd.AddCommand(rpcCmd)
+
+	viper.SetEnvPrefix("MATCHLOCK")
+	viper.AutomaticEnv()
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
+}
+
+func main() {
+	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
 
-	if fs.NArg() == 0 {
-		fmt.Fprintln(os.Stderr, "Error: command required")
-		os.Exit(1)
-	}
+func runRun(cmd *cobra.Command, args []string) error {
+	imageName, _ := cmd.Flags().GetString("image")
+	cpus, _ := cmd.Flags().GetInt("cpus")
+	memory, _ := cmd.Flags().GetInt("memory")
+	timeout, _ := cmd.Flags().GetInt("timeout")
+	interactive, _ := cmd.Flags().GetBool("interactive")
+	workspace, _ := cmd.Flags().GetString("workspace")
+	allowHosts, _ := cmd.Flags().GetStringSlice("allow-host")
+	volumes, _ := cmd.Flags().GetStringSlice("volume")
+	secrets, _ := cmd.Flags().GetStringSlice("secret")
 
-	command := shellQuoteArgs(fs.Args())
+	command := shellQuoteArgs(args)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeout)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	sigCh := make(chan os.Signal, 1)
@@ -176,9 +205,6 @@ func cmdRun(args []string) {
 		cancel()
 	}()
 
-	imageName := *imageFlag
-
-	// Build rootfs from container image (or use cached)
 	builder := image.NewBuilder(&image.BuildOptions{
 		GuestAgentPath: sandbox.DefaultGuestAgentPath(),
 		GuestFusedPath: sandbox.DefaultGuestFusedPath(),
@@ -186,8 +212,7 @@ func cmdRun(args []string) {
 
 	buildResult, err := builder.Build(ctx, imageName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error building rootfs: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("building rootfs: %w", err)
 	}
 	if buildResult.Cached {
 		fmt.Printf("Using cached image %s\n", imageName)
@@ -196,15 +221,13 @@ func cmdRun(args []string) {
 	}
 	sandboxOpts := &sandbox.Options{RootfsPath: buildResult.RootfsPath}
 
-	// Parse volume mounts
-	vfsConfig := &api.VFSConfig{Workspace: *workspace}
+	vfsConfig := &api.VFSConfig{Workspace: workspace}
 	if len(volumes) > 0 {
 		mounts := make(map[string]api.MountConfig)
 		for _, vol := range volumes {
-			hostPath, guestPath, readonly, err := api.ParseVolumeMount(vol, *workspace)
+			hostPath, guestPath, readonly, err := api.ParseVolumeMount(vol, workspace)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: invalid volume mount %q: %v\n", vol, err)
-				os.Exit(1)
+				return fmt.Errorf("invalid volume mount %q: %w", vol, err)
 			}
 			mounts[guestPath] = api.MountConfig{
 				Type:     "real_fs",
@@ -215,15 +238,13 @@ func cmdRun(args []string) {
 		vfsConfig.Mounts = mounts
 	}
 
-	// Parse secrets
 	var parsedSecrets map[string]api.Secret
 	if len(secrets) > 0 {
 		parsedSecrets = make(map[string]api.Secret)
 		for _, s := range secrets {
 			name, secret, err := parseSecret(s)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: invalid secret %q: %v\n", s, err)
-				os.Exit(1)
+				return fmt.Errorf("invalid secret %q: %w", s, err)
 			}
 			parsedSecrets[name] = secret
 		}
@@ -232,9 +253,9 @@ func cmdRun(args []string) {
 	config := &api.Config{
 		Image: imageName,
 		Resources: &api.Resources{
-			CPUs:           *cpus,
-			MemoryMB:       *memory,
-			TimeoutSeconds: *timeout,
+			CPUs:           cpus,
+			MemoryMB:       memory,
+			TimeoutSeconds: timeout,
 		},
 		Network: &api.NetworkConfig{
 			AllowedHosts:    allowHosts,
@@ -246,17 +267,15 @@ func cmdRun(args []string) {
 
 	sb, err := sandbox.New(ctx, config, sandboxOpts)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating sandbox: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("creating sandbox: %w", err)
 	}
 
 	if err := sb.Start(ctx); err != nil {
 		sb.Close()
-		fmt.Fprintf(os.Stderr, "Error starting sandbox: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("starting sandbox: %w", err)
 	}
 
-	if *interactive {
+	if interactive {
 		exitCode := runInteractive(ctx, sb, command)
 		sb.Close()
 		os.Exit(exitCode)
@@ -265,8 +284,7 @@ func cmdRun(args []string) {
 	result, err := sb.Exec(ctx, command, nil)
 	if err != nil {
 		sb.Close()
-		fmt.Fprintf(os.Stderr, "Error executing command: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("executing command: %w", err)
 	}
 
 	os.Stdout.Write(result.Stdout)
@@ -274,39 +292,28 @@ func cmdRun(args []string) {
 
 	sb.Close()
 	os.Exit(result.ExitCode)
+	return nil
 }
 
-func cmdBuild(args []string) {
-	fs := flag.NewFlagSet("build", flag.ExitOnError)
-	guestAgent := fs.String("guest-agent", "", "Path to guest-agent binary")
-	guestFused := fs.String("guest-fused", "", "Path to guest-fused binary")
-	fs.Parse(args)
+func runBuild(cmd *cobra.Command, args []string) error {
+	imageRef := args[0]
+	guestAgent, _ := cmd.Flags().GetString("guest-agent")
+	guestFused, _ := cmd.Flags().GetString("guest-fused")
 
-	if fs.NArg() == 0 {
-		fmt.Fprintln(os.Stderr, "Error: container image reference required (e.g., alpine:latest)")
-		os.Exit(1)
-	}
-
-	imageRef := fs.Arg(0)
-
-	agentPath := *guestAgent
+	agentPath := guestAgent
 	if agentPath == "" {
 		agentPath = sandbox.DefaultGuestAgentPath()
 	}
-	fusedPath := *guestFused
+	fusedPath := guestFused
 	if fusedPath == "" {
 		fusedPath = sandbox.DefaultGuestFusedPath()
 	}
 
 	if _, err := os.Stat(agentPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: guest-agent not found at %s\n", agentPath)
-		fmt.Fprintln(os.Stderr, "Build with: CGO_ENABLED=0 go build -o bin/guest-agent ./cmd/guest-agent")
-		os.Exit(1)
+		return fmt.Errorf("guest-agent not found at %s\nBuild with: CGO_ENABLED=0 go build -o bin/guest-agent ./cmd/guest-agent", agentPath)
 	}
 	if _, err := os.Stat(fusedPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: guest-fused not found at %s\n", fusedPath)
-		fmt.Fprintln(os.Stderr, "Build with: CGO_ENABLED=0 go build -o bin/guest-fused ./cmd/guest-fused")
-		os.Exit(1)
+		return fmt.Errorf("guest-fused not found at %s\nBuild with: CGO_ENABLED=0 go build -o bin/guest-fused ./cmd/guest-fused", fusedPath)
 	}
 
 	builder := image.NewBuilder(&image.BuildOptions{
@@ -320,13 +327,13 @@ func cmdBuild(args []string) {
 	fmt.Printf("Building rootfs from %s...\n", imageRef)
 	result, err := builder.Build(ctx, imageRef)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	fmt.Printf("Built: %s\n", result.RootfsPath)
 	fmt.Printf("Digest: %s\n", result.Digest)
 	fmt.Printf("Size: %.1f MB\n", float64(result.Size)/(1024*1024))
+	return nil
 }
 
 func runInteractive(ctx context.Context, sb *sandbox.Sandbox, command string) int {
@@ -393,23 +400,20 @@ func runInteractive(ctx context.Context, sb *sandbox.Sandbox, command string) in
 	return exitCode
 }
 
-func cmdList(args []string) {
-	fs := flag.NewFlagSet("list", flag.ExitOnError)
-	running := fs.Bool("running", false, "Show only running VMs")
-	fs.Parse(args)
+func runList(cmd *cobra.Command, args []string) error {
+	running, _ := cmd.Flags().GetBool("running")
 
 	mgr := state.NewManager()
 	states, err := mgr.List()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "ID\tSTATUS\tIMAGE\tCREATED\tPID")
 
 	for _, s := range states {
-		if *running && s.Status != "running" {
+		if running && s.Status != "running" {
 			continue
 		}
 		created := s.CreatedAt.Format("2006-01-02 15:04")
@@ -420,33 +424,26 @@ func cmdList(args []string) {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", s.ID, s.Status, s.Image, created, pid)
 	}
 	w.Flush()
+	return nil
 }
 
-func cmdGet(args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Error: VM ID required")
-		os.Exit(1)
-	}
-
+func runGet(cmd *cobra.Command, args []string) error {
 	mgr := state.NewManager()
 	s, err := mgr.Get(args[0])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	output, _ := json.MarshalIndent(s, "", "  ")
 	fmt.Println(string(output))
+	return nil
 }
 
-func cmdKill(args []string) {
-	fs := flag.NewFlagSet("kill", flag.ExitOnError)
-	all := fs.Bool("all", false, "Kill all running VMs")
-	fs.Parse(args)
-
+func runKill(cmd *cobra.Command, args []string) error {
+	all, _ := cmd.Flags().GetBool("all")
 	mgr := state.NewManager()
 
-	if *all {
+	if all {
 		states, _ := mgr.List()
 		for _, s := range states {
 			if s.Status == "running" {
@@ -457,29 +454,25 @@ func cmdKill(args []string) {
 				}
 			}
 		}
-		return
+		return nil
 	}
 
-	if fs.NArg() == 0 {
-		fmt.Fprintln(os.Stderr, "Error: VM ID required")
-		os.Exit(1)
+	if len(args) == 0 {
+		return fmt.Errorf("VM ID required (or use --all)")
 	}
 
-	if err := mgr.Kill(fs.Arg(0)); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	if err := mgr.Kill(args[0]); err != nil {
+		return err
 	}
-	fmt.Printf("Killed %s\n", fs.Arg(0))
+	fmt.Printf("Killed %s\n", args[0])
+	return nil
 }
 
-func cmdRemove(args []string) {
-	fs := flag.NewFlagSet("rm", flag.ExitOnError)
-	stopped := fs.Bool("stopped", false, "Remove all stopped VMs")
-	fs.Parse(args)
-
+func runRemove(cmd *cobra.Command, args []string) error {
+	stopped, _ := cmd.Flags().GetBool("stopped")
 	mgr := state.NewManager()
 
-	if *stopped {
+	if stopped {
 		states, _ := mgr.List()
 		for _, s := range states {
 			if s.Status != "running" {
@@ -490,36 +483,35 @@ func cmdRemove(args []string) {
 				}
 			}
 		}
-		return
+		return nil
 	}
 
-	if fs.NArg() == 0 {
-		fmt.Fprintln(os.Stderr, "Error: VM ID required")
-		os.Exit(1)
+	if len(args) == 0 {
+		return fmt.Errorf("VM ID required (or use --stopped)")
 	}
 
-	if err := mgr.Remove(fs.Arg(0)); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	if err := mgr.Remove(args[0]); err != nil {
+		return err
 	}
-	fmt.Printf("Removed %s\n", fs.Arg(0))
+	fmt.Printf("Removed %s\n", args[0])
+	return nil
 }
 
-func cmdPrune(args []string) {
+func runPrune(cmd *cobra.Command, args []string) error {
 	mgr := state.NewManager()
 	pruned, err := mgr.Prune()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	for _, id := range pruned {
 		fmt.Printf("Pruned %s\n", id)
 	}
 	fmt.Printf("Pruned %d VMs\n", len(pruned))
+	return nil
 }
 
-func cmdRPC(args []string) {
+func runRPC(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -535,7 +527,6 @@ func cmdRPC(args []string) {
 			return nil, fmt.Errorf("image is required")
 		}
 
-		// Build rootfs from container image
 		builder := image.NewBuilder(&image.BuildOptions{
 			GuestAgentPath: sandbox.DefaultGuestAgentPath(),
 			GuestFusedPath: sandbox.DefaultGuestFusedPath(),
@@ -549,20 +540,9 @@ func cmdRPC(args []string) {
 		return sandbox.New(ctx, config, &sandbox.Options{RootfsPath: result.RootfsPath})
 	}
 
-	if err := rpc.RunRPC(ctx, factory); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	return rpc.RunRPC(ctx, factory)
 }
 
-type stringSlice []string
-
-func (s *stringSlice) String() string     { return fmt.Sprintf("%v", *s) }
-func (s *stringSlice) Set(v string) error { *s = append(*s, v); return nil }
-
-// parseSecret parses a secret string in format:
-//   - NAME=VALUE@host1,host2  (inline value)
-//   - NAME@host1,host2        (read value from $NAME environment variable)
 func parseSecret(s string) (string, api.Secret, error) {
 	atIdx := strings.LastIndex(s, "@")
 	if atIdx == -1 {
@@ -583,14 +563,12 @@ func parseSecret(s string) (string, api.Secret, error) {
 
 	var name, value string
 	if eqIdx == -1 {
-		// NAME@hosts format - read from environment
 		name = nameValue
 		value = os.Getenv(name)
 		if value == "" {
 			return "", api.Secret{}, fmt.Errorf("environment variable $%s is not set (hint: use 'sudo -E' to preserve env vars, or pass inline: %s=VALUE@%s)", name, name, hostsStr)
 		}
 	} else {
-		// NAME=VALUE@hosts format
 		name = nameValue[:eqIdx]
 		value = nameValue[eqIdx+1:]
 	}
