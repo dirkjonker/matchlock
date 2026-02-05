@@ -3,8 +3,10 @@ package linux
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -456,6 +458,133 @@ func readFull(conn net.Conn, buf []byte) (int, error) {
 		total += n
 	}
 	return total, nil
+}
+
+// ExecInteractive executes a command with PTY support for interactive sessions
+func (m *LinuxMachine) ExecInteractive(ctx context.Context, command string, opts *api.ExecOptions, rows, cols uint16, stdin io.Reader, stdout io.Writer, resizeCh <-chan [2]uint16) (int, error) {
+	if m.config.VsockCID == 0 || m.config.VsockPath == "" {
+		return 1, fmt.Errorf("vsock not configured")
+	}
+
+	conn, err := m.dialVsock(VsockPortExec)
+	if err != nil {
+		return 1, fmt.Errorf("failed to connect to exec service: %w", err)
+	}
+	defer conn.Close()
+
+	// Build TTY exec request
+	req := vsock.ExecTTYRequest{
+		Command: command,
+		Rows:    rows,
+		Cols:    cols,
+	}
+	if opts != nil {
+		req.WorkingDir = opts.WorkingDir
+		req.Env = opts.Env
+	}
+
+	reqData, err := json.Marshal(req)
+	if err != nil {
+		return 1, fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	// Send TTY exec request
+	header := make([]byte, 5)
+	header[0] = vsock.MsgTypeExecTTY
+	binary.BigEndian.PutUint32(header[1:], uint32(len(reqData)))
+
+	if _, err := conn.Write(header); err != nil {
+		return 1, fmt.Errorf("failed to write header: %w", err)
+	}
+	if _, err := conn.Write(reqData); err != nil {
+		return 1, fmt.Errorf("failed to write request: %w", err)
+	}
+
+	done := make(chan int, 1)
+	errCh := make(chan error, 1)
+
+	// Read stdout from guest
+	go func() {
+		header := make([]byte, 5)
+		for {
+			if _, err := readFull(conn, header); err != nil {
+				errCh <- err
+				return
+			}
+
+			msgType := header[0]
+			length := binary.BigEndian.Uint32(header[1:])
+
+			data := make([]byte, length)
+			if length > 0 {
+				if _, err := readFull(conn, data); err != nil {
+					errCh <- err
+					return
+				}
+			}
+
+			switch msgType {
+			case vsock.MsgTypeStdout:
+				stdout.Write(data)
+			case vsock.MsgTypeExit:
+				if len(data) >= 4 {
+					done <- int(binary.BigEndian.Uint32(data))
+				} else {
+					done <- 0
+				}
+				return
+			}
+		}
+	}()
+
+	// Send stdin to guest
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := stdin.Read(buf)
+			if n > 0 {
+				sendVsockMessage(conn, vsock.MsgTypeStdin, buf[:n])
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// Handle resize events
+	go func() {
+		for size := range resizeCh {
+			data := make([]byte, 4)
+			binary.BigEndian.PutUint16(data[0:2], size[0]) // rows
+			binary.BigEndian.PutUint16(data[2:4], size[1]) // cols
+			sendVsockMessage(conn, vsock.MsgTypeResize, data)
+		}
+	}()
+
+	select {
+	case exitCode := <-done:
+		return exitCode, nil
+	case err := <-errCh:
+		return 1, err
+	case <-ctx.Done():
+		sendVsockMessage(conn, vsock.MsgTypeSignal, []byte{byte(syscall.SIGTERM)})
+		return 1, ctx.Err()
+	}
+}
+
+func sendVsockMessage(conn net.Conn, msgType uint8, data []byte) error {
+	header := make([]byte, 5)
+	header[0] = msgType
+	binary.BigEndian.PutUint32(header[1:], uint32(len(data)))
+	if _, err := conn.Write(header); err != nil {
+		return err
+	}
+	if len(data) > 0 {
+		if _, err := conn.Write(data); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 

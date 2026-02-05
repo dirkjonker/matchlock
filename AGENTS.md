@@ -64,8 +64,15 @@ sudo ./scripts/build-rootfs.sh
 # Run a command in sandbox
 matchlock run python script.py
 
+# Interactive mode (like docker -it)
+matchlock run -it python3
+matchlock run -it sh
+
 # With network allowlist
 matchlock run --allow-host "api.openai.com" python agent.py
+
+# HTTPS with automatic CA injection
+matchlock run --allow-host "httpbin.org" curl https://httpbin.org/get
 
 # List sandboxes
 matchlock list

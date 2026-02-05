@@ -13,6 +13,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/google/uuid"
 	"github.com/jingkaihe/matchlock/pkg/api"
 	sandboxnet "github.com/jingkaihe/matchlock/pkg/net"
@@ -55,7 +57,7 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`Usage: sandbox <command> [options]
+	fmt.Println(`Usage: matchlock <command> [options]
 
 Commands:
   run <command>     Run a command in a new sandbox
@@ -67,17 +69,20 @@ Commands:
   --rpc             Run in RPC mode (for programmatic access)
 
 Options:
-  --image <name>       Image variant (minimal, standard, full)
-  --allow-host <host>  Add host to allowlist (can be repeated)
-  --cpus <n>           Number of CPUs
-  --memory <mb>        Memory in MB
-  --timeout <s>        Timeout in seconds
+  -it                    Interactive mode with TTY (like docker -it)
+  --image <name>         Image variant (minimal, standard, full)
+  --allow-host <host>    Add host to allowlist (can be repeated)
+  --cpus <n>             Number of CPUs
+  --memory <mb>          Memory in MB
+  --timeout <s>          Timeout in seconds
 
 Examples:
-  sandbox run python script.py
-  sandbox run --allow-host "api.openai.com" python agent.py
-  sandbox list
-  sandbox kill vm-abc123`)
+  matchlock run python script.py
+  matchlock run -it python3                              # Interactive Python
+  matchlock run -it sh                                   # Interactive shell
+  matchlock run --allow-host "api.openai.com" python agent.py
+  matchlock list
+  matchlock kill vm-abc123`)
 }
 
 func cmdRun(args []string) {
@@ -86,6 +91,7 @@ func cmdRun(args []string) {
 	cpus := fs.Int("cpus", 1, "Number of CPUs")
 	memory := fs.Int("memory", 512, "Memory in MB")
 	timeout := fs.Int("timeout", 300, "Timeout in seconds")
+	interactive := fs.Bool("it", false, "Interactive mode with TTY")
 	var allowHosts stringSlice
 	fs.Var(&allowHosts, "allow-host", "Allowed hosts")
 
@@ -138,6 +144,12 @@ func cmdRun(args []string) {
 		os.Exit(1)
 	}
 
+	if *interactive {
+		exitCode := runInteractive(ctx, vm, command)
+		vm.Close()
+		os.Exit(exitCode)
+	}
+
 	result, err := vm.Exec(ctx, command, nil)
 	if err != nil {
 		vm.Close()
@@ -151,6 +163,75 @@ func cmdRun(args []string) {
 	// Close VM before exit (os.Exit doesn't run deferred functions)
 	vm.Close()
 	os.Exit(result.ExitCode)
+}
+
+func runInteractive(ctx context.Context, vm *sandboxVM, command string) int {
+	// Check if stdin is a terminal
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Fprintln(os.Stderr, "Error: -it requires a TTY")
+		return 1
+	}
+
+	// Get terminal size
+	cols, rows, err := term.GetSize(int(os.Stdin.Fd()))
+	if err != nil {
+		rows, cols = 24, 80 // defaults
+	}
+
+	// Put terminal in raw mode
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error setting raw mode: %v\n", err)
+		return 1
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	// Handle SIGWINCH for terminal resize
+	resizeCh := make(chan [2]uint16, 1)
+	winchCh := make(chan os.Signal, 1)
+	signal.Notify(winchCh, syscall.SIGWINCH)
+	go func() {
+		for range winchCh {
+			if c, r, err := term.GetSize(int(os.Stdin.Fd())); err == nil {
+				select {
+				case resizeCh <- [2]uint16{uint16(r), uint16(c)}:
+				default:
+				}
+			}
+		}
+	}()
+	defer signal.Stop(winchCh)
+	defer close(resizeCh)
+
+	// Get the linux machine for interactive exec
+	linuxMachine, ok := vm.machine.(*linux.LinuxMachine)
+	if !ok {
+		fmt.Fprintln(os.Stderr, "Error: interactive mode requires Linux backend")
+		return 1
+	}
+
+	// Build exec options with CA injection if proxy is enabled
+	var opts *api.ExecOptions
+	if vm.caInjector != nil {
+		opts = &api.ExecOptions{
+			Env: map[string]string{
+				"SSL_CERT_FILE":       "/workspace/.sandbox-ca.crt",
+				"REQUESTS_CA_BUNDLE":  "/workspace/.sandbox-ca.crt",
+				"CURL_CA_BUNDLE":      "/workspace/.sandbox-ca.crt",
+				"NODE_EXTRA_CA_CERTS": "/workspace/.sandbox-ca.crt",
+			},
+		}
+	}
+
+	exitCode, err := linuxMachine.ExecInteractive(ctx, command, opts, uint16(rows), uint16(cols), os.Stdin, os.Stdout, resizeCh)
+	if err != nil {
+		// Restore terminal before printing error
+		term.Restore(int(os.Stdin.Fd()), oldState)
+		fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
+		return 1
+	}
+
+	return exitCode
 }
 
 func cmdList(args []string) {

@@ -222,6 +222,10 @@ const (
 	MsgTypeStderr     uint8 = 4
 	MsgTypeSignal     uint8 = 5
 	MsgTypeReady      uint8 = 6
+	MsgTypeStdin      uint8 = 7  // TTY: stdin data from host
+	MsgTypeResize     uint8 = 8  // TTY: window resize
+	MsgTypeExecTTY    uint8 = 9  // TTY: exec with PTY
+	MsgTypeExit       uint8 = 10 // TTY: process exited
 )
 
 // ExecRequest is sent from host to guest to execute a command
@@ -231,6 +235,22 @@ type ExecRequest struct {
 	WorkingDir string
 	Env        map[string]string
 	Stdin      []byte
+}
+
+// ExecTTYRequest is sent from host to guest for interactive execution
+type ExecTTYRequest struct {
+	Command    string
+	Args       []string
+	WorkingDir string
+	Env        map[string]string
+	Rows       uint16
+	Cols       uint16
+}
+
+// WindowSize represents terminal dimensions
+type WindowSize struct {
+	Rows uint16
+	Cols uint16
 }
 
 // ExecResponse is sent from guest to host with execution results

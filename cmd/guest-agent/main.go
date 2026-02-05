@@ -6,17 +6,22 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"syscall"
+	"time"
 	"unsafe"
+
+	"github.com/creack/pty"
 )
 
 const (
-	AF_VSOCK     = 40
+	AF_VSOCK        = 40
 	VMADDR_CID_HOST = 2
 
 	VsockPortExec  = 5000
@@ -29,6 +34,10 @@ const (
 	MsgTypeStderr     uint8 = 4
 	MsgTypeSignal     uint8 = 5
 	MsgTypeReady      uint8 = 6
+	MsgTypeStdin      uint8 = 7
+	MsgTypeResize     uint8 = 8
+	MsgTypeExecTTY    uint8 = 9
+	MsgTypeExit       uint8 = 10
 )
 
 type sockaddrVM struct {
@@ -45,6 +54,15 @@ type ExecRequest struct {
 	WorkingDir string            `json:"working_dir"`
 	Env        map[string]string `json:"env"`
 	Stdin      []byte            `json:"stdin"`
+}
+
+type ExecTTYRequest struct {
+	Command    string            `json:"command"`
+	Args       []string          `json:"args"`
+	WorkingDir string            `json:"working_dir"`
+	Env        map[string]string `json:"env"`
+	Rows       uint16            `json:"rows"`
+	Cols       uint16            `json:"cols"`
 }
 
 type ExecResponse struct {
@@ -105,27 +123,35 @@ func serveExec() {
 }
 
 func handleExec(fd int) {
-	defer syscall.Close(fd)
-
 	// Read message header (type + length)
 	header := make([]byte, 5)
 	if _, err := readFull(fd, header); err != nil {
+		syscall.Close(fd)
 		return
 	}
 
 	msgType := header[0]
-	if msgType != MsgTypeExec {
-		return
-	}
-
 	length := uint32(header[1])<<24 | uint32(header[2])<<16 | uint32(header[3])<<8 | uint32(header[4])
 
 	// Read request data
 	data := make([]byte, length)
 	if _, err := readFull(fd, data); err != nil {
+		syscall.Close(fd)
 		return
 	}
 
+	switch msgType {
+	case MsgTypeExec:
+		handleExecBatch(fd, data)
+		syscall.Close(fd)
+	case MsgTypeExecTTY:
+		handleExecTTY(fd, data)
+	default:
+		syscall.Close(fd)
+	}
+}
+
+func handleExecBatch(fd int, data []byte) {
 	var req ExecRequest
 	if err := json.Unmarshal(data, &req); err != nil {
 		sendExecResponse(fd, &ExecResponse{Error: err.Error()})
@@ -167,6 +193,145 @@ func handleExec(fd int) {
 	}
 
 	sendExecResponse(fd, resp)
+}
+
+func handleExecTTY(fd int, data []byte) {
+	var req ExecTTYRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		sendExitCode(fd, 1)
+		syscall.Close(fd)
+		return
+	}
+
+	cmd := exec.Command("sh", "-c", req.Command)
+
+	if req.WorkingDir != "" {
+		cmd.Dir = req.WorkingDir
+	}
+
+	if len(req.Env) > 0 {
+		env := os.Environ()
+		for k, v := range req.Env {
+			env = append(env, fmt.Sprintf("%s=%s", k, v))
+		}
+		cmd.Env = env
+	}
+
+	// Start command with PTY
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		sendExitCode(fd, 1)
+		syscall.Close(fd)
+		return
+	}
+	defer ptmx.Close()
+
+	// Set initial window size
+	if req.Rows > 0 && req.Cols > 0 {
+		pty.Setsize(ptmx, &pty.Winsize{Rows: req.Rows, Cols: req.Cols})
+	}
+
+	// Handle SIGCHLD to know when process exits
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGCHLD)
+	defer signal.Stop(sigCh)
+
+	done := make(chan struct{})
+
+	// Copy PTY output to vsock (stdout)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(buf)
+			if n > 0 {
+				sendMessage(fd, MsgTypeStdout, buf[:n])
+			}
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	// Read messages from vsock (stdin, resize, signal)
+	go func() {
+		for {
+			msgType, msgData, err := readMessage(fd)
+			if err != nil {
+				break
+			}
+
+			switch msgType {
+			case MsgTypeStdin:
+				ptmx.Write(msgData)
+			case MsgTypeResize:
+				if len(msgData) >= 4 {
+					rows := binary.BigEndian.Uint16(msgData[0:2])
+					cols := binary.BigEndian.Uint16(msgData[2:4])
+					pty.Setsize(ptmx, &pty.Winsize{Rows: rows, Cols: cols})
+				}
+			case MsgTypeSignal:
+				if len(msgData) >= 1 {
+					sig := syscall.Signal(msgData[0])
+					cmd.Process.Signal(sig)
+				}
+			}
+		}
+	}()
+
+	// Wait for process to exit
+	go func() {
+		cmd.Wait()
+		close(done)
+	}()
+
+	<-done
+
+	exitCode := 0
+	if cmd.ProcessState != nil {
+		exitCode = cmd.ProcessState.ExitCode()
+	}
+	sendExitCode(fd, exitCode)
+	
+	// Small delay to ensure exit code is transmitted before closing
+	time.Sleep(100 * time.Millisecond)
+	syscall.Close(fd)
+}
+
+func sendMessage(fd int, msgType uint8, data []byte) {
+	header := make([]byte, 5)
+	header[0] = msgType
+	binary.BigEndian.PutUint32(header[1:], uint32(len(data)))
+	syscall.Write(fd, header)
+	if len(data) > 0 {
+		syscall.Write(fd, data)
+	}
+}
+
+func sendExitCode(fd int, code int) {
+	data := make([]byte, 4)
+	binary.BigEndian.PutUint32(data, uint32(code))
+	sendMessage(fd, MsgTypeExit, data)
+}
+
+func readMessage(fd int) (uint8, []byte, error) {
+	header := make([]byte, 5)
+	if _, err := readFull(fd, header); err != nil {
+		return 0, nil, err
+	}
+
+	msgType := header[0]
+	length := binary.BigEndian.Uint32(header[1:])
+
+	if length == 0 {
+		return msgType, nil, nil
+	}
+
+	data := make([]byte, length)
+	if _, err := readFull(fd, data); err != nil {
+		return 0, nil, err
+	}
+
+	return msgType, data, nil
 }
 
 func sendExecResponse(fd int, resp *ExecResponse) {
