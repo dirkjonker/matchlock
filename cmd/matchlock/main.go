@@ -72,6 +72,7 @@ Commands:
 Options:
   -it                    Interactive mode with TTY (like docker -it)
   --image <name>         Image variant (minimal, standard, full)
+  --workspace <path>     Guest VFS mount point (default: /workspace)
   --allow-host <host>    Add host to allowlist (can be repeated, supports wildcards)
   -v <host:guest[:ro]>   Mount host directory into sandbox (can be repeated)
   --cpus <n>             Number of CPUs
@@ -79,10 +80,10 @@ Options:
   --timeout <s>          Timeout in seconds
 
 Volume Mounts (-v):
-  All mounts appear under /workspace in the guest:
-  ./mycode:/workspace              Mount to /workspace root
-  ./data:/data                     Mounts to /workspace/data
-  /host/path:/workspace/subdir:ro  Read-only mount
+  Guest paths are relative to workspace (or use full workspace paths):
+  ./mycode:code                    Mounts to <workspace>/code
+  ./data:/workspace/data           Same as above (explicit)
+  /host/path:subdir:ro             Read-only mount to <workspace>/subdir
 
 Wildcard Patterns for --allow-host:
   *                      Allow all hosts
@@ -93,8 +94,8 @@ Examples:
   matchlock run python script.py
   matchlock run -it python3                              # Interactive Python
   matchlock run -it sh                                   # Interactive shell
-  matchlock run -v ./mycode:/workspace python /workspace/script.py
-  matchlock run -v ./data:/data ls /workspace/data       # /data -> /workspace/data
+  matchlock run -v ./mycode:code python /workspace/code/script.py
+  matchlock run --workspace /home/user -v ./code:code ls /home/user/code
   matchlock run --allow-host "*.openai.com" python agent.py
   matchlock list
   matchlock kill vm-abc123`)
@@ -107,6 +108,7 @@ func cmdRun(args []string) {
 	memory := fs.Int("memory", 512, "Memory in MB")
 	timeout := fs.Int("timeout", 300, "Timeout in seconds")
 	interactive := fs.Bool("it", false, "Interactive mode with TTY")
+	workspace := fs.String("workspace", api.DefaultWorkspace, "Guest mount point for VFS")
 	var allowHosts stringSlice
 	fs.Var(&allowHosts, "allow-host", "Allowed hosts")
 	var volumes stringSlice
@@ -137,11 +139,11 @@ func cmdRun(args []string) {
 	}()
 
 	// Parse volume mounts
-	var vfsConfig *api.VFSConfig
+	vfsConfig := &api.VFSConfig{Workspace: *workspace}
 	if len(volumes) > 0 {
 		mounts := make(map[string]api.MountConfig)
 		for _, vol := range volumes {
-			hostPath, guestPath, readonly, err := parseVolumeMount(vol)
+			hostPath, guestPath, readonly, err := parseVolumeMount(vol, *workspace)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: invalid volume mount %q: %v\n", vol, err)
 				os.Exit(1)
@@ -152,7 +154,7 @@ func cmdRun(args []string) {
 				Readonly: readonly,
 			}
 		}
-		vfsConfig = &api.VFSConfig{Mounts: mounts}
+		vfsConfig.Mounts = mounts
 	}
 
 	config := &api.Config{
@@ -250,10 +252,11 @@ func runInteractive(ctx context.Context, vm *sandboxVM, command string) int {
 	// Build exec options with CA and secret injection if proxy is enabled
 	opts := &api.ExecOptions{Env: make(map[string]string)}
 	if vm.caInjector != nil {
-		opts.Env["SSL_CERT_FILE"] = "/workspace/.sandbox-ca.crt"
-		opts.Env["REQUESTS_CA_BUNDLE"] = "/workspace/.sandbox-ca.crt"
-		opts.Env["CURL_CA_BUNDLE"] = "/workspace/.sandbox-ca.crt"
-		opts.Env["NODE_EXTRA_CA_CERTS"] = "/workspace/.sandbox-ca.crt"
+		certPath := vm.workspace + "/.sandbox-ca.crt"
+		opts.Env["SSL_CERT_FILE"] = certPath
+		opts.Env["REQUESTS_CA_BUNDLE"] = certPath
+		opts.Env["CURL_CA_BUNDLE"] = certPath
+		opts.Env["NODE_EXTRA_CA_CERTS"] = certPath
 	}
 	// Inject secret placeholders
 	if vm.policy != nil {
@@ -426,8 +429,8 @@ func (s *stringSlice) String() string  { return fmt.Sprintf("%v", *s) }
 func (s *stringSlice) Set(v string) error { *s = append(*s, v); return nil }
 
 // parseVolumeMount parses a volume mount string in format "host:guest" or "host:guest:ro"
-// Guest paths are automatically prefixed with /workspace if not already
-func parseVolumeMount(vol string) (hostPath, guestPath string, readonly bool, err error) {
+// Guest paths are relative to the workspace unless they start with the workspace path
+func parseVolumeMount(vol string, workspace string) (hostPath, guestPath string, readonly bool, err error) {
 	parts := strings.Split(vol, ":")
 	if len(parts) < 2 || len(parts) > 3 {
 		return "", "", false, fmt.Errorf("expected format host:guest or host:guest:ro")
@@ -458,15 +461,16 @@ func parseVolumeMount(vol string) (hostPath, guestPath string, readonly bool, er
 		}
 	}
 
-	// Guest path must be absolute
+	// Guest path handling:
+	// - If path starts with workspace, use as-is
+	// - If path is absolute but not under workspace, prefix with workspace
+	// - If path is relative, make it relative to workspace
 	if !filepath.IsAbs(guestPath) {
-		guestPath = "/" + guestPath
-	}
-
-	// All mounts go through /workspace - remap if needed
-	// The guest FUSE daemon mounts at /workspace and prefixes all paths with /workspace
-	if !strings.HasPrefix(guestPath, "/workspace") {
-		guestPath = "/workspace" + guestPath
+		guestPath = filepath.Join(workspace, guestPath)
+	} else if !strings.HasPrefix(guestPath, workspace) {
+		// Absolute path not under workspace - make it a subpath
+		// e.g., /data becomes /workspace/data
+		guestPath = filepath.Join(workspace, guestPath)
 	}
 
 	return hostPath, guestPath, readonly, nil
@@ -488,10 +492,14 @@ type sandboxVM struct {
 	caInjector     *sandboxnet.CAInjector
 	subnetInfo     *state.SubnetInfo
 	subnetAlloc    *state.SubnetAllocator
+	workspace      string
 }
 
 func createVM(ctx context.Context, config *api.Config) (*sandboxVM, error) {
 	id := "vm-" + uuid.New().String()[:8]
+
+	// Get workspace path from config
+	workspace := config.GetWorkspace()
 
 	stateMgr := state.NewManager()
 	if err := stateMgr.Register(id, config); err != nil {
@@ -521,6 +529,7 @@ func createVM(ctx context.Context, config *api.Config) (*sandboxVM, error) {
 		GatewayIP:  subnetInfo.GatewayIP,
 		GuestIP:    subnetInfo.GuestIP,
 		SubnetCIDR: subnetInfo.GatewayIP + "/24",
+		Workspace:  workspace,
 	}
 
 	machine, err := backend.Create(ctx, vmConfig)
@@ -609,7 +618,7 @@ func createVM(ctx context.Context, config *api.Config) (*sandboxVM, error) {
 		}
 	}
 	if len(vfsProviders) == 0 {
-		vfsProviders["/workspace"] = vfs.NewMemoryProvider()
+		vfsProviders[workspace] = vfs.NewMemoryProvider()
 	}
 	vfsRoot := vfs.NewMountRouter(vfsProviders)
 
@@ -638,12 +647,12 @@ func createVM(ctx context.Context, config *api.Config) (*sandboxVM, error) {
 	if proxy != nil {
 		caInjector = sandboxnet.NewCAInjector(proxy.CAPool())
 		// Write CA cert to workspace for guest access
-		if mp, ok := vfsProviders["/workspace"].(*vfs.MemoryProvider); ok {
+		if mp, ok := vfsProviders[workspace].(*vfs.MemoryProvider); ok {
 			if err := mp.WriteFile("/.sandbox-ca.crt", caInjector.CACertPEM(), 0644); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to write CA cert: %v\n", err)
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "Warning: /workspace is not a MemoryProvider, CA cert not written\n")
+			fmt.Fprintf(os.Stderr, "Warning: %s is not a MemoryProvider, CA cert not written\n", workspace)
 		}
 	}
 
@@ -663,6 +672,7 @@ func createVM(ctx context.Context, config *api.Config) (*sandboxVM, error) {
 		caInjector:  caInjector,
 		subnetInfo:  subnetInfo,
 		subnetAlloc: subnetAlloc,
+		workspace:   workspace,
 	}, nil
 }
 
@@ -687,7 +697,7 @@ func (v *sandboxVM) Exec(ctx context.Context, command string, opts *api.ExecOpti
 
 	// Inject CA certificate environment variables if proxy is enabled
 	if v.caInjector != nil {
-		certPath := "/workspace/.sandbox-ca.crt"
+		certPath := v.workspace + "/.sandbox-ca.crt"
 		opts.Env["SSL_CERT_FILE"] = certPath
 		opts.Env["REQUESTS_CA_BUNDLE"] = certPath
 		opts.Env["CURL_CA_BUNDLE"] = certPath

@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// DefaultWorkspace is the default mount point for the VFS in the guest
+const DefaultWorkspace = "/workspace"
+
 type Config struct {
 	Image     string            `json:"image,omitempty"`
 	Resources *Resources        `json:"resources,omitempty"`
@@ -34,8 +37,17 @@ type Secret struct {
 }
 
 type VFSConfig struct {
+	Workspace    string                 `json:"workspace,omitempty"`
 	DirectMounts map[string]DirectMount `json:"direct_mounts,omitempty"`
 	Mounts       map[string]MountConfig `json:"mounts,omitempty"`
+}
+
+// GetWorkspace returns the configured workspace path or the default
+func (v *VFSConfig) GetWorkspace() string {
+	if v != nil && v.Workspace != "" {
+		return v.Workspace
+	}
+	return DefaultWorkspace
 }
 
 type DirectMount struct {
@@ -51,6 +63,14 @@ type MountConfig struct {
 	Lower    *MountConfig `json:"lower,omitempty"`
 }
 
+// GetWorkspace returns the workspace path from config, or default if not set
+func (c *Config) GetWorkspace() string {
+	if c.VFS != nil {
+		return c.VFS.GetWorkspace()
+	}
+	return DefaultWorkspace
+}
+
 func DefaultConfig() *Config {
 	return &Config{
 		Image: "standard",
@@ -64,7 +84,7 @@ func DefaultConfig() *Config {
 		},
 		VFS: &VFSConfig{
 			Mounts: map[string]MountConfig{
-				"/workspace": {Type: "memory"},
+				DefaultWorkspace: {Type: "memory"},
 			},
 		},
 	}

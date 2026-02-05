@@ -1,5 +1,5 @@
 // Guest FUSE daemon using go-fuse library
-// Connects to host VFS server over vsock and mounts at /workspace
+// Connects to host VFS server over vsock and mounts at configurable workspace
 package main
 
 import (
@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -631,8 +632,22 @@ func writeFull(fd int, buf []byte) (int, error) {
 	return total, nil
 }
 
+func getWorkspaceFromCmdline() string {
+	data, err := os.ReadFile("/proc/cmdline")
+	if err != nil {
+		return "/workspace"
+	}
+	for _, part := range strings.Fields(string(data)) {
+		if strings.HasPrefix(part, "matchlock.workspace=") {
+			return strings.TrimPrefix(part, "matchlock.workspace=")
+		}
+	}
+	return "/workspace"
+}
+
 func main() {
-	mountpoint := "/workspace"
+	// Get workspace from kernel cmdline or use default
+	mountpoint := getWorkspaceFromCmdline()
 	if len(os.Args) > 1 {
 		mountpoint = os.Args[1]
 	}
@@ -661,8 +676,8 @@ func main() {
 	defer client.Close()
 	fmt.Println("Connected to VFS server")
 
-	// Create root node
-	root := &VFSRoot{client: client, basePath: "/workspace"}
+	// Create root node - basePath must match the VFS mount configuration on host
+	root := &VFSRoot{client: client, basePath: mountpoint}
 
 	// Mount with go-fuse
 	opts := &fs.Options{

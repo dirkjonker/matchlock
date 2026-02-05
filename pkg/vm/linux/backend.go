@@ -246,10 +246,15 @@ func (m *LinuxMachine) generateFirecrackerConfig() []byte {
 		if gatewayIP == "" {
 			gatewayIP = "192.168.100.1"
 		}
+		workspace := m.config.Workspace
+		if workspace == "" {
+			workspace = "/workspace"
+		}
 		// Use acpi=off to avoid memory region conflicts with virtio-mmio devices
 		// Firecracker uses virtio-mmio transport, not virtio-pci
 		// Format: ip=<client-ip>:<server-ip>:<gw-ip>:<netmask>:<hostname>:<device>:<autoconf>:<dns0>:<dns1>
-		kernelArgs = fmt.Sprintf("console=ttyS0 reboot=k panic=1 acpi=off ip=%s::%s:255.255.255.0::eth0:off:8.8.8.8:8.8.4.4", guestIP, gatewayIP)
+		// matchlock.workspace is passed to guest-fused via /proc/cmdline
+		kernelArgs = fmt.Sprintf("console=ttyS0 reboot=k panic=1 acpi=off ip=%s::%s:255.255.255.0::eth0:off:8.8.8.8:8.8.4.4 matchlock.workspace=%s", guestIP, gatewayIP, workspace)
 	}
 
 	config := fmt.Sprintf(`{

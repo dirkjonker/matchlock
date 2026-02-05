@@ -141,6 +141,8 @@ type CreateOptions struct {
 	Mounts map[string]MountConfig
 	// Secrets defines secrets to inject (replaced in HTTP requests to allowed hosts)
 	Secrets []Secret
+	// Workspace is the mount point for VFS in the guest (default: /workspace)
+	Workspace string
 }
 
 // Secret defines a secret that will be injected as a placeholder env var
@@ -203,10 +205,15 @@ func (c *Client) Create(opts CreateOptions) (string, error) {
 		params["network"] = network
 	}
 
-	if len(opts.Mounts) > 0 {
-		params["vfs"] = map[string]interface{}{
-			"mounts": opts.Mounts,
+	if len(opts.Mounts) > 0 || opts.Workspace != "" {
+		vfs := make(map[string]interface{})
+		if len(opts.Mounts) > 0 {
+			vfs["mounts"] = opts.Mounts
 		}
+		if opts.Workspace != "" {
+			vfs["workspace"] = opts.Workspace
+		}
+		params["vfs"] = vfs
 	}
 
 	result, err := c.sendRequest("create", params)

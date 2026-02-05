@@ -98,8 +98,9 @@ matchlock --rpc
 - Command execution service on vsock port 5000
 
 ### Guest FUSE Daemon (`cmd/guest-fused`)
-- Mounts VFS from host via vsock at /workspace
-- Full FUSE implementation (read, write, mkdir, etc.)
+- Mounts VFS from host via vsock at configurable workspace (default: /workspace)
+- Uses go-fuse library for POSIX-compliant FUSE implementation
+- Reads workspace path from kernel cmdline (`matchlock.workspace=`)
 - Connects to VFS server on vsock port 5001
 
 ### Policy Engine (`pkg/policy`)
@@ -223,6 +224,29 @@ Image variants:
 - `minimal`: Base Alpine only
 - `standard`: Python, Node.js, Git
 - `full`: Go, Rust, dev tools
+
+## Configuration
+
+### Workspace Path
+The VFS mount point in the guest is configurable via `VFSConfig.Workspace`. Default is `/workspace`.
+
+```go
+// Go SDK example with custom workspace
+opts := sdk.CreateOptions{
+    Workspace: "/home/user/code",
+    // ...
+}
+```
+
+The workspace path is passed to the guest FUSE daemon via kernel cmdline parameter `matchlock.workspace=`.
+
+### API Config Structure
+```go
+type VFSConfig struct {
+    Workspace    string                 `json:"workspace,omitempty"`  // Guest mount point (default: /workspace)
+    Mounts       map[string]MountConfig `json:"mounts,omitempty"`     // VFS provider mounts
+}
+```
 
 ## Notes
 
