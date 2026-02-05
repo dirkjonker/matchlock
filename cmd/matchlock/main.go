@@ -127,7 +127,7 @@ var rpcCmd = &cobra.Command{
 }
 
 func init() {
-	runCmd.Flags().StringP("image", "i", "", "Container image (required)")
+	runCmd.Flags().String("image", "", "Container image (required)")
 	runCmd.Flags().String("workspace", api.DefaultWorkspace, "Guest mount point for VFS")
 	runCmd.Flags().StringSlice("allow-host", nil, "Allowed hosts (can be repeated)")
 	runCmd.Flags().StringSliceP("volume", "v", nil, "Volume mount (host:guest or host:guest:ro)")
@@ -135,7 +135,8 @@ func init() {
 	runCmd.Flags().Int("cpus", 1, "Number of CPUs")
 	runCmd.Flags().Int("memory", 512, "Memory in MB")
 	runCmd.Flags().Int("timeout", 300, "Timeout in seconds")
-	runCmd.Flags().BoolP("interactive", "t", false, "Interactive mode with TTY (use -it)")
+	runCmd.Flags().BoolP("tty", "t", false, "Allocate a pseudo-TTY")
+	runCmd.Flags().BoolP("interactive", "i", false, "Keep STDIN open")
 	runCmd.MarkFlagRequired("image")
 
 	viper.BindPFlag("run.image", runCmd.Flags().Lookup("image"))
@@ -146,6 +147,7 @@ func init() {
 	viper.BindPFlag("run.cpus", runCmd.Flags().Lookup("cpus"))
 	viper.BindPFlag("run.memory", runCmd.Flags().Lookup("memory"))
 	viper.BindPFlag("run.timeout", runCmd.Flags().Lookup("timeout"))
+	viper.BindPFlag("run.tty", runCmd.Flags().Lookup("tty"))
 	viper.BindPFlag("run.interactive", runCmd.Flags().Lookup("interactive"))
 
 	buildCmd.Flags().String("guest-agent", "", "Path to guest-agent binary")
@@ -187,11 +189,15 @@ func runRun(cmd *cobra.Command, args []string) error {
 	cpus, _ := cmd.Flags().GetInt("cpus")
 	memory, _ := cmd.Flags().GetInt("memory")
 	timeout, _ := cmd.Flags().GetInt("timeout")
+	tty, _ := cmd.Flags().GetBool("tty")
 	interactive, _ := cmd.Flags().GetBool("interactive")
 	workspace, _ := cmd.Flags().GetString("workspace")
 	allowHosts, _ := cmd.Flags().GetStringSlice("allow-host")
 	volumes, _ := cmd.Flags().GetStringSlice("volume")
 	secrets, _ := cmd.Flags().GetStringSlice("secret")
+
+	// Like Docker, -it means interactive TTY mode
+	interactiveMode := tty && interactive
 
 	command := shellQuoteArgs(args)
 
@@ -275,7 +281,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("starting sandbox: %w", err)
 	}
 
-	if interactive {
+	if interactiveMode {
 		exitCode := runInteractive(ctx, sb, command)
 		sb.Close()
 		os.Exit(exitCode)

@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	tunDevice    = "/dev/net/tun"
-	ifnameLen    = 16
+	tunDevice     = "/dev/net/tun"
+	ifnameLen     = 16
 	TUNSETPERSIST = 0x400454cb
 )
 
@@ -181,8 +181,4 @@ func GenerateMAC(vmID string) string {
 
 func SetupIPForwarding() error {
 	return os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644)
-}
-
-func SetupNAT(tapName, extIface string) error {
-	return nil
 }

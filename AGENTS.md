@@ -316,6 +316,56 @@ Required kernel options for Firecracker v1.8+:
 - `CONFIG_FUSE_FS=y` - VFS support
 - `CONFIG_IP_PNP=y` - Required for kernel `ip=` boot parameter (network configuration)
 
+## Linux Setup
+
+### Quick Setup
+
+Run the built-in setup command (requires root):
+
+```bash
+# Build the CLI first
+mise run build
+
+# Run setup (installs Firecracker, configures permissions and network)
+sudo ./bin/matchlock setup linux
+```
+
+### What it configures
+
+1. **Firecracker** - Downloads and installs the latest Firecracker binary
+2. **KVM access** - Adds your user to the `kvm` group
+3. **Capabilities** - Sets `CAP_NET_ADMIN` and `CAP_NET_RAW` on the matchlock binary
+4. **TUN device** - Ensures `/dev/net/tun` is accessible
+5. **IP forwarding** - Enables `net.ipv4.ip_forward` permanently
+6. **nftables** - Ensures the nf_tables kernel module is loaded
+
+### Running without sudo
+
+After running `matchlock setup linux`, matchlock can run without sudo because:
+- The binary has `CAP_NET_ADMIN` capability for creating TAP interfaces and nftables rules
+- nftables rules are created/destroyed per-VM at runtime using netlink (no iptables binary needed)
+- IP forwarding is already enabled system-wide
+
+### Setup Options
+
+```bash
+# Skip specific setup steps
+sudo matchlock setup linux --skip-firecracker
+sudo matchlock setup linux --skip-permissions
+sudo matchlock setup linux --skip-network
+
+# Custom install directory for Firecracker
+sudo matchlock setup linux --install-dir /opt/bin
+
+# Specify user (default: SUDO_USER or current user)
+sudo matchlock setup linux --user myuser
+
+# Specify binary path for capability setup
+sudo matchlock setup linux --binary /usr/local/bin/matchlock
+```
+
+After setup, log out and back in for group changes to take effect.
+
 ## macOS Setup (Apple Silicon)
 
 ### Prerequisites
@@ -412,7 +462,7 @@ type VFSConfig struct {
 
 ## Notes
 
-- Requires root/CAP_NET_ADMIN for TAP device creation
+- Run `sudo matchlock setup linux` once to configure capabilities (then no sudo needed)
 - Firecracker binary must be installed for VM operation
 - Guest agent and FUSE daemon auto-start via OpenRC
 

@@ -18,13 +18,20 @@ import (
 	"github.com/jingkaihe/matchlock/pkg/vm/linux"
 )
 
+// FirewallRules is an interface for managing firewall rules.
+type FirewallRules interface {
+	Setup() error
+	Cleanup() error
+}
+
 // Sandbox represents a running sandbox VM with all associated resources.
 type Sandbox struct {
 	id          string
 	config      *api.Config
 	machine     vm.Machine
 	proxy       *sandboxnet.TransparentProxy
-	iptRules    *sandboxnet.IPTablesRules
+	fwRules     FirewallRules
+	natRules    *sandboxnet.NFTablesNAT
 	policy      *policy.Engine
 	vfsRoot     *vfs.MountRouter
 	vfsServer   *vfs.VFSServer
@@ -133,7 +140,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 	const httpsPort = 18443
 
 	var proxy *sandboxnet.TransparentProxy
-	var iptRules *sandboxnet.IPTablesRules
+	var fwRules FirewallRules
 
 	needsProxy := config.Network != nil && (len(config.Network.AllowedHosts) > 0 || len(config.Network.Secrets) > 0)
 	if needsProxy {
@@ -153,19 +160,21 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 
 		proxy.Start()
 
-		iptRules = sandboxnet.NewIPTablesRules(linuxMachine.TapName(), gatewayIP, httpPort, httpsPort)
-		if err := iptRules.Setup(); err != nil {
+		fwRules = sandboxnet.NewNFTablesRules(linuxMachine.TapName(), gatewayIP, httpPort, httpsPort)
+		if err := fwRules.Setup(); err != nil {
 			proxy.Close()
 			machine.Close()
 			subnetAlloc.Release(id)
 			stateMgr.Unregister(id)
-			return nil, fmt.Errorf("failed to setup iptables rules: %w", err)
+			return nil, fmt.Errorf("failed to setup firewall rules: %w", err)
 		}
 	}
 
-	// Set up basic NAT for guest network access
-	if err := sandboxnet.SetupNAT(linuxMachine.TapName(), subnetInfo.Subnet); err != nil {
+	// Set up basic NAT for guest network access using nftables
+	natRules := sandboxnet.NewNFTablesNAT(linuxMachine.TapName())
+	if err := natRules.Setup(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to setup NAT: %v\n", err)
+		natRules = nil
 	}
 
 	// Create VFS providers
@@ -193,8 +202,8 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 		if proxy != nil {
 			proxy.Close()
 		}
-		if iptRules != nil {
-			iptRules.Cleanup()
+		if fwRules != nil {
+			fwRules.Cleanup()
 		}
 		machine.Close()
 		subnetAlloc.Release(id)
@@ -220,7 +229,8 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 		config:      config,
 		machine:     machine,
 		proxy:       proxy,
-		iptRules:    iptRules,
+		fwRules:     fwRules,
+		natRules:    natRules,
 		policy:      policyEngine,
 		vfsRoot:     vfsRoot,
 		vfsServer:   vfsServer,
@@ -358,17 +368,19 @@ func (s *Sandbox) Close() error {
 	if s.vfsStopFunc != nil {
 		s.vfsStopFunc()
 	}
-	if s.iptRules != nil {
-		if err := s.iptRules.Cleanup(); err != nil {
-			errs = append(errs, fmt.Errorf("iptables cleanup: %w", err))
+	if s.fwRules != nil {
+		if err := s.fwRules.Cleanup(); err != nil {
+			errs = append(errs, fmt.Errorf("firewall cleanup: %w", err))
+		}
+	}
+	if s.natRules != nil {
+		if err := s.natRules.Cleanup(); err != nil {
+			errs = append(errs, fmt.Errorf("NAT cleanup: %w", err))
 		}
 	}
 	if s.proxy != nil {
 		s.proxy.Close()
 	}
-
-	// Clean up NAT forwarding rules
-	sandboxnet.CleanupNAT(s.tapName)
 
 	// Release subnet allocation
 	if s.subnetAlloc != nil {
