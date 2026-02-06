@@ -26,14 +26,21 @@ description = "Build CLI and guest binaries"
 depends = ["build", "build:guest"]
 
 [tasks."build:guest"]
-description = "Build guest-agent and guest-fused (static Linux binaries)"
+description = "Build guest-agent and guest-fused (static Linux binaries, auto-detects arch on macOS)"
 run = """
 #!/usr/bin/env bash
 set -e
 mkdir -p bin
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o bin/guest-agent ./cmd/guest-agent
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o bin/guest-fused ./cmd/guest-fused
-echo "Built: bin/guest-agent, bin/guest-fused"
+
+# Auto-detect target architecture based on host
+GUEST_ARCH="amd64"
+if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+    GUEST_ARCH="arm64"
+fi
+
+CGO_ENABLED=0 GOOS=linux GOARCH=$GUEST_ARCH go build -trimpath -o bin/guest-agent ./cmd/guest-agent
+CGO_ENABLED=0 GOOS=linux GOARCH=$GUEST_ARCH go build -trimpath -o bin/guest-fused ./cmd/guest-fused
+echo "Built ($GUEST_ARCH): bin/guest-agent, bin/guest-fused"
 """
 
 [tasks."build:guest-arm64"]
@@ -238,11 +245,17 @@ description = "Build ARM64 guest binaries for macOS VMs"
 run = """
 #!/usr/bin/env bash
 set -e
-mkdir -p $OUTPUT_DIR
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o $OUTPUT_DIR/guest-agent ./cmd/guest-agent
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o $OUTPUT_DIR/guest-fused ./cmd/guest-fused
-echo "Built ARM64 guest binaries in $OUTPUT_DIR"
+mkdir -p bin $OUTPUT_DIR
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o bin/guest-agent ./cmd/guest-agent
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o bin/guest-fused ./cmd/guest-fused
+cp bin/guest-agent $OUTPUT_DIR/guest-agent
+cp bin/guest-fused $OUTPUT_DIR/guest-fused
+echo "Built ARM64 guest binaries in bin/ and $OUTPUT_DIR"
 """
+
+[tasks."darwin:all"]
+description = "Build CLI (codesigned) and ARM64 guest binaries for macOS"
+depends = ["darwin:build", "darwin:guest"]
 
 [tasks."darwin:setup"]
 description = "Full macOS setup (build + sign + guest binaries)"
