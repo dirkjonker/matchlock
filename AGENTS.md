@@ -101,6 +101,17 @@ matchlock build ubuntu:22.04
 matchlock run --image alpine:latest cat /etc/os-release
 matchlock run --image python:3.12-alpine python3 --version
 
+# Keep sandbox alive after command exits (like docker run without --rm)
+matchlock run --image alpine:latest --rm=false echo hello
+# Prints VM ID (e.g., vm-abc12345), VM stays running
+
+# Start sandbox without running a command
+matchlock run --image alpine:latest --rm=false
+
+# Execute command in a running sandbox
+matchlock exec vm-abc12345 echo hello
+matchlock exec vm-abc12345 -it sh
+
 # Interactive mode (like docker -it)
 matchlock run --image alpine:latest -it sh
 matchlock run --image python:3.12-alpine -it python3

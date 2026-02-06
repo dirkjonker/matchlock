@@ -201,6 +201,10 @@ func (m *Manager) SocketPath(id string) string {
 	return filepath.Join(m.baseDir, id, "socket")
 }
 
+func (m *Manager) ExecSocketPath(id string) string {
+	return filepath.Join(m.baseDir, id, "exec.sock")
+}
+
 func (m *Manager) Dir(id string) string {
 	return filepath.Join(m.baseDir, id)
 }

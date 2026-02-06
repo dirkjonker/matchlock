@@ -69,13 +69,15 @@ Wildcard Patterns for --allow-host:
   api-*.example.com      Allow pattern match (api-v1.example.com, api-prod.example.com)`,
 	Example: `  matchlock run --image alpine:latest -it sh
   matchlock run --image python:3.12-alpine python3 -c 'print(42)'
+  matchlock run --image alpine:latest --rm=false   # keep VM alive after exit
+  matchlock exec <vm-id> echo hello                # exec into running VM
 
   # With secrets (MITM replaces placeholder in HTTP requests)
   export ANTHROPIC_API_KEY=sk-xxx
   matchlock run --image python:3.12-alpine \
     --secret ANTHROPIC_API_KEY@api.anthropic.com \
     python call_api.py`,
-	Args: cobra.MinimumNArgs(1),
+	Args: cobra.ArbitraryArgs,
 	RunE: runRun,
 }
 
@@ -105,6 +107,18 @@ var killCmd = &cobra.Command{
 	Use:   "kill <id>",
 	Short: "Kill a running sandbox",
 	RunE:  runKill,
+}
+
+var execCmd = &cobra.Command{
+	Use:   "exec [flags] <id> -- <command>",
+	Short: "Execute a command in a running sandbox",
+	Long: `Execute a command in a running sandbox.
+
+The sandbox must have been started with --rm=false to remain running.`,
+	Example: `  matchlock exec vm-abc123 echo hello
+  matchlock exec vm-abc123 -it sh`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: runExec,
 }
 
 var rmCmd = &cobra.Command{
@@ -139,6 +153,7 @@ func init() {
 	runCmd.Flags().BoolP("tty", "t", false, "Allocate a pseudo-TTY")
 	runCmd.Flags().BoolP("interactive", "i", false, "Keep STDIN open")
 	runCmd.Flags().Bool("pull", false, "Always pull image from registry (ignore cache)")
+	runCmd.Flags().Bool("rm", true, "Remove sandbox after command exits (set --rm=false to keep running)")
 	runCmd.MarkFlagRequired("image")
 
 	viper.BindPFlag("run.image", runCmd.Flags().Lookup("image"))
@@ -154,6 +169,11 @@ func init() {
 	viper.BindPFlag("run.interactive", runCmd.Flags().Lookup("interactive"))
 	viper.BindPFlag("run.pull", runCmd.Flags().Lookup("pull"))
 
+	viper.BindPFlag("run.rm", runCmd.Flags().Lookup("rm"))
+
+	execCmd.Flags().BoolP("tty", "t", false, "Allocate a pseudo-TTY")
+	execCmd.Flags().BoolP("interactive", "i", false, "Keep STDIN open")
+
 	buildCmd.Flags().Bool("pull", false, "Always pull image from registry (ignore cache)")
 
 	listCmd.Flags().Bool("running", false, "Show only running VMs")
@@ -166,6 +186,7 @@ func init() {
 	viper.BindPFlag("rm.stopped", rmCmd.Flags().Lookup("stopped"))
 
 	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(execCmd)
 	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(getCmd)
@@ -196,13 +217,17 @@ func runRun(cmd *cobra.Command, args []string) error {
 	allowHosts, _ := cmd.Flags().GetStringSlice("allow-host")
 	volumes, _ := cmd.Flags().GetStringSlice("volume")
 	secrets, _ := cmd.Flags().GetStringSlice("secret")
+	rm, _ := cmd.Flags().GetBool("rm")
 
-	// Like Docker, -it means interactive TTY mode
 	interactiveMode := tty && interactive
 	pull, _ := cmd.Flags().GetBool("pull")
 	diskSize, _ := cmd.Flags().GetInt("disk-size")
 
 	command := shellQuoteArgs(args)
+
+	if rm && len(args) == 0 && !interactiveMode {
+		return fmt.Errorf("command required (or use --rm=false to start without a command)")
+	}
 
 	var ctx context.Context
 	var cancel context.CancelFunc
@@ -291,23 +316,131 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("starting sandbox: %w", err)
 	}
 
+	// Start exec relay server so `matchlock exec` can connect from another process
+	execRelay := sandbox.NewExecRelay(sb)
+	stateMgr := state.NewManager()
+	execSocketPath := stateMgr.ExecSocketPath(sb.ID())
+	if err := execRelay.Start(execSocketPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to start exec relay: %v\n", err)
+	}
+	defer execRelay.Stop()
+
+	if !rm {
+		fmt.Printf("%s\n", sb.ID())
+	}
+
 	if interactiveMode {
 		exitCode := runInteractive(ctx, sb, command)
-		sb.Close()
+		if rm {
+			sb.Close()
+		}
 		os.Exit(exitCode)
 	}
 
-	result, err := sb.Exec(ctx, command, nil)
-	if err != nil {
+	if len(args) > 0 {
+		result, err := sb.Exec(ctx, command, nil)
+		if err != nil {
+			if rm {
+				sb.Close()
+			}
+			return fmt.Errorf("executing command: %w", err)
+		}
+
+		os.Stdout.Write(result.Stdout)
+		os.Stderr.Write(result.Stderr)
+
+		if rm {
+			sb.Close()
+			os.Exit(result.ExitCode)
+		}
+	}
+
+	if !rm {
+		// Block until signal — keeps the sandbox alive for `matchlock exec`
+		<-ctx.Done()
 		sb.Close()
-		return fmt.Errorf("executing command: %w", err)
+	}
+
+	return nil
+}
+
+func runExec(cmd *cobra.Command, args []string) error {
+	vmID := args[0]
+	cmdArgs := args[1:]
+
+	tty, _ := cmd.Flags().GetBool("tty")
+	interactive, _ := cmd.Flags().GetBool("interactive")
+	interactiveMode := tty && interactive
+
+	if len(cmdArgs) == 0 && !interactiveMode {
+		return fmt.Errorf("command required (or use -it for interactive mode)")
+	}
+
+	mgr := state.NewManager()
+	vmState, err := mgr.Get(vmID)
+	if err != nil {
+		return fmt.Errorf("VM %s not found: %w", vmID, err)
+	}
+	if vmState.Status != "running" {
+		return fmt.Errorf("VM %s is not running (status: %s)", vmID, vmState.Status)
+	}
+
+	execSocketPath := mgr.ExecSocketPath(vmID)
+	if _, err := os.Stat(execSocketPath); err != nil {
+		return fmt.Errorf("exec socket not found for %s (was it started with --rm=false?)", vmID)
+	}
+
+	command := shellQuoteArgs(cmdArgs)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		cancel()
+	}()
+
+	if interactiveMode {
+		return runExecInteractive(ctx, execSocketPath, command)
+	}
+
+	result, err := sandbox.ExecViaRelay(ctx, execSocketPath, command)
+	if err != nil {
+		return fmt.Errorf("exec failed: %w", err)
 	}
 
 	os.Stdout.Write(result.Stdout)
 	os.Stderr.Write(result.Stderr)
-
-	sb.Close()
 	os.Exit(result.ExitCode)
+	return nil
+}
+
+func runExecInteractive(ctx context.Context, execSocketPath, command string) error {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return fmt.Errorf("-it requires a TTY")
+	}
+
+	cols, rows, err := term.GetSize(int(os.Stdin.Fd()))
+	if err != nil {
+		rows, cols = 24, 80
+	}
+
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return fmt.Errorf("setting raw mode: %w", err)
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	exitCode, err := sandbox.ExecInteractiveViaRelay(ctx, execSocketPath, command, uint16(rows), uint16(cols), os.Stdin, os.Stdout)
+	if err != nil {
+		term.Restore(int(os.Stdin.Fd()), oldState)
+		return fmt.Errorf("interactive exec failed: %w", err)
+	}
+
+	term.Restore(int(os.Stdin.Fd()), oldState)
+	os.Exit(exitCode)
 	return nil
 }
 
