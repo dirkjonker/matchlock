@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jingkaihe/matchlock/pkg/api"
@@ -91,6 +92,17 @@ func (i *HTTPInterceptor) HandleHTTP(guestConn net.Conn, dstIP string, dstPort i
 			return
 		}
 
+		if isStreamingResponse(modifiedResp) {
+			i.emitEvent(modifiedReq, modifiedResp, host, time.Since(start))
+			err := writeResponseHeadersAndStreamBody(guestConn, modifiedResp)
+			resp.Body.Close()
+			realConn.Close()
+			if err != nil {
+				return
+			}
+			return
+		}
+
 		duration := time.Since(start)
 		i.emitEvent(modifiedReq, modifiedResp, host, duration)
 
@@ -171,6 +183,16 @@ func (i *HTTPInterceptor) HandleHTTPS(guestConn net.Conn, dstIP string, dstPort 
 
 		modifiedResp, err := i.policy.OnResponse(resp, modifiedReq, serverName)
 		if err != nil {
+			resp.Body.Close()
+			return
+		}
+
+		if isStreamingResponse(modifiedResp) {
+			i.emitEvent(modifiedReq, modifiedResp, serverName, time.Since(start))
+			if err := writeResponseHeadersAndStreamBody(tlsConn, modifiedResp); err != nil {
+				resp.Body.Close()
+				return
+			}
 			resp.Body.Close()
 			return
 		}
@@ -266,4 +288,55 @@ func writeResponse(conn net.Conn, resp *http.Response) error {
 		return err
 	}
 	return bw.Flush()
+}
+
+func isStreamingResponse(resp *http.Response) bool {
+	ct := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(ct, "text/event-stream") {
+		return true
+	}
+	for _, te := range resp.TransferEncoding {
+		if te == "chunked" {
+			return true
+		}
+	}
+	if resp.ContentLength == -1 && resp.ProtoMajor == 1 && resp.ProtoMinor == 1 {
+		return true
+	}
+	return false
+}
+
+func writeResponseHeadersAndStreamBody(conn net.Conn, resp *http.Response) error {
+	bw := bufio.NewWriterSize(conn, 4*1024)
+
+	statusLine := fmt.Sprintf("HTTP/%d.%d %d %s\r\n", resp.ProtoMajor, resp.ProtoMinor, resp.StatusCode, http.StatusText(resp.StatusCode))
+	if _, err := bw.WriteString(statusLine); err != nil {
+		return err
+	}
+
+	if err := resp.Header.Write(bw); err != nil {
+		return err
+	}
+	if _, err := bw.WriteString("\r\n"); err != nil {
+		return err
+	}
+	if err := bw.Flush(); err != nil {
+		return err
+	}
+
+	buf := make([]byte, 4*1024)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := conn.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				return nil
+			}
+			return readErr
+		}
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -149,15 +150,15 @@ func (e *Engine) replaceInRequest(req *http.Request, placeholder, value string) 
 		}
 	}
 
-	if req.Body != nil && req.ContentLength > 0 && req.ContentLength < 10*1024*1024 {
-		body := make([]byte, req.ContentLength)
-		req.Body.Read(body)
+	if req.Body != nil {
+		body, err := io.ReadAll(req.Body)
 		req.Body.Close()
-
-		if bytes.Contains(body, []byte(placeholder)) {
-			body = bytes.ReplaceAll(body, []byte(placeholder), []byte(value))
-			req.ContentLength = int64(len(body))
+		if err == nil && len(body) > 0 && len(body) < 10*1024*1024 {
+			if bytes.Contains(body, []byte(placeholder)) {
+				body = bytes.ReplaceAll(body, []byte(placeholder), []byte(value))
+			}
 		}
+		req.ContentLength = int64(len(body))
 		req.Body = &readCloser{bytes.NewReader(body)}
 	}
 }
