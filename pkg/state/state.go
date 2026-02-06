@@ -37,11 +37,11 @@ func NewManagerWithDir(baseDir string) *Manager {
 
 func (m *Manager) Register(id string, config interface{}) error {
 	dir := filepath.Join(m.baseDir, id)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "pid"), []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "pid"), []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 		return err
 	}
 
@@ -49,20 +49,20 @@ func (m *Manager) Register(id string, config interface{}) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), configJSON, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), configJSON, 0600); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "status"), []byte("running"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "status"), []byte("running"), 0600); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "created_at"), []byte(time.Now().Format(time.RFC3339)), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "created_at"), []byte(time.Now().Format(time.RFC3339)), 0600); err != nil {
 		return err
 	}
 
 	logsDir := filepath.Join(dir, "logs")
-	os.MkdirAll(logsDir, 0755)
+	os.MkdirAll(logsDir, 0700)
 
 	return nil
 }

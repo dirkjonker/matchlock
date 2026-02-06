@@ -31,8 +31,8 @@ run = """
 #!/usr/bin/env bash
 set -e
 mkdir -p bin
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/guest-agent ./cmd/guest-agent
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/guest-fused ./cmd/guest-fused
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o bin/guest-agent ./cmd/guest-agent
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o bin/guest-fused ./cmd/guest-fused
 echo "Built: bin/guest-agent, bin/guest-fused"
 """
 
@@ -42,8 +42,8 @@ run = """
 #!/usr/bin/env bash
 set -e
 mkdir -p bin
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/guest-agent-arm64 ./cmd/guest-agent
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/guest-fused-arm64 ./cmd/guest-fused
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o bin/guest-agent-arm64 ./cmd/guest-agent
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o bin/guest-fused-arm64 ./cmd/guest-fused
 echo "Built: bin/guest-agent-arm64, bin/guest-fused-arm64"
 """
 
@@ -239,8 +239,8 @@ run = """
 #!/usr/bin/env bash
 set -e
 mkdir -p $OUTPUT_DIR
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o $OUTPUT_DIR/guest-agent ./cmd/guest-agent
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o $OUTPUT_DIR/guest-fused ./cmd/guest-fused
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o $OUTPUT_DIR/guest-agent ./cmd/guest-agent
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o $OUTPUT_DIR/guest-fused ./cmd/guest-fused
 echo "Built ARM64 guest binaries in $OUTPUT_DIR"
 """
 

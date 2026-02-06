@@ -73,13 +73,29 @@ type ExecResponse struct {
 }
 
 func main() {
+	// If re-execed as sandbox launcher, apply seccomp + drop caps + exec real command
+	if isSandboxLauncher() {
+		runSandboxLauncher()
+		return
+	}
+
 	fmt.Println("Guest agent starting...")
+
+	// Mount /proc inside new PID namespace (children need it)
+	ensureProcMounted()
 
 	// Start ready listener first
 	go serveReady()
 
 	// Start exec service
 	serveExec()
+}
+
+// ensureProcMounted ensures /proc is mounted. When child processes run in a new
+// PID namespace, they need a fresh /proc mount to see their own PID space.
+func ensureProcMounted() {
+	os.MkdirAll("/proc", 0555)
+	syscall.Mount("proc", "/proc", "proc", 0, "")
 }
 
 func serveReady() {
@@ -158,6 +174,9 @@ func handleExecBatch(fd int, data []byte) {
 		return
 	}
 
+	// Wipe the raw request data from memory now that it's been deserialized
+	wipeBytes(data)
+
 	// Execute command
 	var stdout, stderr bytes.Buffer
 	cmd := exec.Command("sh", "-c", req.Command)
@@ -175,6 +194,13 @@ func handleExecBatch(fd int, data []byte) {
 		}
 		cmd.Env = env
 	}
+
+	// Apply sandbox isolation: PID namespace + seccomp + cap drop via re-exec
+	applySandboxSysProcAttr(cmd)
+	wrapCommandForSandbox(cmd)
+
+	// Wipe the request's env map from memory before running
+	wipeMap(req.Env)
 
 	err := cmd.Run()
 
@@ -203,6 +229,9 @@ func handleExecTTY(fd int, data []byte) {
 		return
 	}
 
+	// Wipe the raw request data from memory
+	wipeBytes(data)
+
 	cmd := exec.Command("sh", "-c", req.Command)
 
 	if req.WorkingDir != "" {
@@ -216,6 +245,13 @@ func handleExecTTY(fd int, data []byte) {
 		}
 		cmd.Env = env
 	}
+
+	// Apply sandbox isolation: PID namespace + seccomp + cap drop via re-exec
+	applySandboxSysProcAttr(cmd)
+	wrapCommandForSandbox(cmd)
+
+	// Wipe the request's env map from memory before running
+	wipeMap(req.Env)
 
 	// Start command with PTY
 	ptmx, err := pty.Start(cmd)
