@@ -1,32 +1,34 @@
-"""
-Matchlock Python SDK
+"""Matchlock Python SDK — sandboxes for AI-generated code.
 
-A Python client for interacting with Matchlock sandboxes via JSON-RPC.
+Builder API:
 
-Example usage:
+    from matchlock import Client, Sandbox
 
-    from matchlock import Client, CreateOptions
+    sandbox = Sandbox("python:3.12-alpine") \\
+        .allow_host("dl-cdn.alpinelinux.org", "api.anthropic.com") \\
+        .add_secret("ANTHROPIC_API_KEY", os.environ["ANTHROPIC_API_KEY"], "api.anthropic.com")
 
     with Client() as client:
-        client.create(CreateOptions(image="standard", cpus=1, memory_mb=512))
-        
-        result = client.exec("echo 'Hello from sandbox!'")
+        vm_id = client.launch(sandbox)
+
+        result = client.exec("echo hello")
         print(result.stdout)
-        
-        client.write_file("/workspace/script.py", b"print('Hello')")
-        content = client.read_file("/workspace/script.py")
+
+        stream_result = client.exec_stream("echo streaming", stdout=sys.stdout)
 """
 
+from .builder import Sandbox
 from .client import Client
 from .types import (
     Config,
     CreateOptions,
-    MountConfig,
-    Secret,
     ExecResult,
+    ExecStreamResult,
     FileInfo,
     MatchlockError,
+    MountConfig,
     RPCError,
+    Secret,
 )
 
 __version__ = "0.1.0"
@@ -34,10 +36,12 @@ __all__ = [
     "Client",
     "Config",
     "CreateOptions",
-    "MountConfig",
-    "Secret",
     "ExecResult",
+    "ExecStreamResult",
     "FileInfo",
     "MatchlockError",
+    "MountConfig",
     "RPCError",
+    "Sandbox",
+    "Secret",
 ]

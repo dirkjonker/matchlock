@@ -22,7 +22,12 @@ func main() {
 	defer client.Close()
 
 	sandbox := sdk.New("python:3.12-alpine").
-		AllowHost("dl-cdn.alpinelinux.org", "api.anthropic.com").
+		AllowHost(
+			"dl-cdn.alpinelinux.org",
+			"files.pythonhosted.org", "pypi.org",
+			"astral.sh", "github.com", "objects.githubusercontent.com",
+			"api.anthropic.com",
+		).
 		AddSecret("ANTHROPIC_API_KEY", os.Getenv("ANTHROPIC_API_KEY"), "api.anthropic.com")
 
 	vmID, err := client.Launch(sandbox)
@@ -34,15 +39,35 @@ func main() {
 
 	// Buffered exec — collects all output, returns when done
 	run(client, "python3 --version")
-	run(client, "apk add --no-cache -q curl")
 
-	// Streaming exec — prints output as it arrives (Anthropic streaming API)
+	// Install uv
+	run(client, "pip install --quiet uv")
+
+	// Write a Python script that uses the Anthropic SDK to stream plain text
+	script := `# /// script
+# requires-python = ">=3.12"
+# dependencies = ["anthropic"]
+# ///
+import anthropic, os
+
+client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+with client.messages.stream(
+    model="claude-haiku-4-5-20251001",
+    max_tokens=1000,
+    messages=[{"role": "user", "content": "Explain TCP to me"}],
+) as stream:
+    for text in stream.text_stream:
+        print(text, end="", flush=True)
+print()
+`
+	if err := client.WriteFile("/workspace/ask.py", []byte(script)); err != nil {
+		slog.Error("write_file failed", "error", err)
+		os.Exit(1)
+	}
+
+	// Streaming exec — prints plain text as it arrives
 	result, err := client.ExecStream(
-		`curl -sN https://api.anthropic.com/v1/messages `+
-			`-H "Content-Type: application/json" `+
-			`-H "x-api-key: $ANTHROPIC_API_KEY" `+
-			`-H "anthropic-version: 2023-06-01" `+
-			`-d '{"model":"claude-haiku-4-5-20251001","max_tokens":1000,"stream":true,"messages":[{"role":"user","content":"Explain TCP to me"}]}'`,
+		"uv run /workspace/ask.py",
 		os.Stdout, os.Stderr,
 	)
 	if err != nil {
