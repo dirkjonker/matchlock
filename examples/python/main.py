@@ -70,3 +70,7 @@ with Client(config) as client:
     )
     print()
     log.info("done exit_code=%d duration_ms=%d", result.exit_code, result.duration_ms)
+
+
+# Clean up stopped VM state (close() was called by __exit__)
+client.remove()

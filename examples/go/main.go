@@ -9,6 +9,13 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("fatal", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg := sdk.DefaultConfig()
 	if os.Getenv("MATCHLOCK_BIN") == "" {
 		cfg.BinaryPath = "./bin/matchlock"
@@ -16,9 +23,9 @@ func main() {
 
 	client, err := sdk.NewClient(cfg)
 	if err != nil {
-		slog.Error("failed to create client", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("create client: %w", err)
 	}
+	defer client.Remove()
 	defer client.Close()
 
 	sandbox := sdk.New("python:3.12-alpine").
@@ -32,16 +39,21 @@ func main() {
 
 	vmID, err := client.Launch(sandbox)
 	if err != nil {
-		slog.Error("failed to launch sandbox", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("launch sandbox: %w", err)
 	}
 	slog.Info("sandbox ready", "vm", vmID)
 
 	// Buffered exec — collects all output, returns when done
-	run(client, "python3 --version")
+	result, err := client.Exec("python3 --version")
+	if err != nil {
+		return fmt.Errorf("exec python3 --version: %w", err)
+	}
+	fmt.Print(result.Stdout)
 
 	// Install uv
-	run(client, "pip install --quiet uv")
+	if _, err := client.Exec("pip install --quiet uv"); err != nil {
+		return fmt.Errorf("exec pip install uv: %w", err)
+	}
 
 	// Write a Python script that uses the Anthropic SDK to stream plain text
 	script := `# /// script
@@ -61,28 +73,18 @@ with client.messages.stream(
 print()
 `
 	if err := client.WriteFile("/workspace/ask.py", []byte(script)); err != nil {
-		slog.Error("write_file failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("write_file: %w", err)
 	}
 
 	// Streaming exec — prints plain text as it arrives
-	result, err := client.ExecStream(
+	streamResult, err := client.ExecStream(
 		"uv run /workspace/ask.py",
 		os.Stdout, os.Stderr,
 	)
 	if err != nil {
-		slog.Error("exec_stream failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("exec_stream: %w", err)
 	}
 	fmt.Println()
-	slog.Info("done", "exit_code", result.ExitCode, "duration_ms", result.DurationMS)
-}
-
-func run(c *sdk.Client, cmd string) {
-	result, err := c.Exec(cmd)
-	if err != nil {
-		slog.Error("exec failed", "cmd", cmd, "error", err)
-		os.Exit(1)
-	}
-	fmt.Print(result.Stdout)
+	slog.Info("done", "exit_code", streamResult.ExitCode, "duration_ms", streamResult.DurationMS)
+	return nil
 }

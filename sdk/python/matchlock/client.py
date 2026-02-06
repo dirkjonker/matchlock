@@ -70,6 +70,7 @@ class Client:
         self._pending: dict[int, _PendingRequest] = {}
         self._reader_thread: threading.Thread | None = None
         self._closed = False
+        self._last_vm_id: str | None = None
 
     def __enter__(self) -> "Client":
         self.start()
@@ -108,6 +109,7 @@ class Client:
         if self._closed:
             return
         self._closed = True
+        self._last_vm_id = self._vm_id
 
         if self._process is None or self._process.poll() is not None:
             return
@@ -132,7 +134,19 @@ class Client:
             except Exception:
                 pass
 
-        self._vm_id = None
+    def remove(self) -> None:
+        """Remove the stopped VM state directory.
+
+        Must be called after close(). Uses the matchlock CLI binary
+        configured in Config.binary_path.
+        """
+        vm_id = self._vm_id or self._last_vm_id
+        if not vm_id:
+            return
+        subprocess.run(
+            [self._config.binary_path, "rm", vm_id],
+            capture_output=True, text=True, check=True,
+        )
 
     # ── Reader loop ──────────────────────────────────────────────────
 

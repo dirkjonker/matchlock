@@ -115,7 +115,9 @@ func (c *Client) VMID() string {
 	return c.vmID
 }
 
-// Close closes the sandbox and cleans up resources
+// Close closes the sandbox and cleans up resources.
+// The VM state directory is preserved so it appears in "matchlock list".
+// Call Remove after Close to delete the state entirely.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	if c.closed {
@@ -130,6 +132,21 @@ func (c *Client) Close() error {
 
 	c.stdin.Close()
 	return c.cmd.Wait()
+}
+
+// Remove deletes the stopped VM state directory.
+// Must be called after Close. Uses the matchlock CLI binary
+// that was configured in Config.BinaryPath.
+func (c *Client) Remove() error {
+	if c.vmID == "" {
+		return nil
+	}
+	bin := c.cmd.Path
+	out, err := exec.Command(bin, "rm", c.vmID).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("matchlock rm %s: %s: %w", c.vmID, out, err)
+	}
+	return nil
 }
 
 // CreateOptions holds options for creating a sandbox
