@@ -1,167 +1,123 @@
 # Matchlock
 
-A lightweight micro-VM sandbox for running AI-generated code securely with network interception and secret protection.
+Run AI agents securely in isolated micro-VM sandboxes without worrying about secret exfiltration. Matchlock provides granular network controls — allowlist specific hosts, inject secrets via MITM proxy so they never enter the VM, and block everything else by default.
 
 ## Features
 
-- **Secure Execution**: Code runs in isolated Firecracker micro-VMs
-- **Container Images**: Run any Docker/OCI image (Alpine, Ubuntu, Python, etc.)
-- **Network MITM**: All HTTP/HTTPS traffic intercepted via transparent proxy (nftables on Linux, gVisor userspace TCP/IP on macOS)
-- **Secret Protection**: Secrets never enter the VM, only placeholders
-- **Host Allowlisting**: Control which hosts code can access
-- **Programmable VFS**: Overlay filesystems with copy-on-write
-- **Fast Boot**: <1 second VM startup time
+- **Micro-VM Isolation**: Each sandbox runs in its own Firecracker (Linux) or Virtualization.framework (macOS) VM
+- **Container Images**: Run any Docker/OCI image — Alpine, Ubuntu, Python, Node, etc.
+- **Network Control**: Allowlist specific hosts, block everything else. All HTTP/HTTPS traffic intercepted via transparent proxy
+- **Secret Protection**: Secrets never enter the VM. The VM sees a placeholder; the MITM proxy replaces it in-flight on allowed hosts only
+- **Cross-Platform**: Full feature parity on Linux (x86_64) and macOS (Apple Silicon)
+- **Programmable VFS**: Overlay filesystems with copy-on-write, mounted via FUSE
+- **Fast Boot**: Sub-second VM startup
 
 ## Quick Start
 
 ### Prerequisites
 
-- Linux x86_64 with KVM support
-- Go 1.21+
-- Root access (for TAP devices and image building)
+- [mise](https://mise.jdx.dev/) for task management
+- **Linux**: KVM support
+- **macOS**: Apple Silicon, `brew install e2fsprogs`
 
 ### Install
 
 ```bash
-# Clone
 git clone https://github.com/jingkaihe/matchlock.git
 cd matchlock
+mise install          # Install Go, linters, tools
 
-# Build binaries
-make build-all
+# macOS (Apple Silicon)
+mise run darwin:setup # Build + codesign CLI + ARM64 guest binaries
 
-# Install Firecracker
-make install-firecracker
-
-# Build kernel (one-time, ~10 min)
-make kernel
+# Linux
+mise run setup        # Build + install Firecracker + configure permissions
 ```
 
 ### Usage
 
 ```bash
-# Run with any container image (auto-builds rootfs on first use)
-sudo matchlock run --image alpine:latest cat /etc/os-release
-sudo matchlock run --image python:3.12-alpine python3 --version
-sudo matchlock run --image ubuntu:22.04 uname -a
+# Run a command in a sandbox (--image is required)
+matchlock run --image alpine:latest cat /etc/os-release
+matchlock run --image python:3.12-alpine python3 --version
 
 # Interactive shell
-sudo matchlock run --image alpine:latest -it sh
+matchlock run --image alpine:latest -it sh
 
-# Pre-build an image for faster subsequent runs
-sudo matchlock build python:3.12-alpine
+# Keep sandbox alive after command exits
+matchlock run --image alpine:latest --rm=false echo hello
+# Prints VM ID, e.g. vm-abc12345
+
+# Start a sandbox without running a command
+matchlock run --image alpine:latest --rm=false
+
+# Execute command in a running sandbox
+matchlock exec vm-abc12345 echo hello
+matchlock exec vm-abc12345 -it sh
 
 # With network allowlist
-sudo matchlock run --image python:3.12-alpine --allow-host "api.openai.com" python script.py
+matchlock run --image python:3.12-alpine \
+  --allow-host "api.openai.com" \
+  python agent.py
 
-# List running sandboxes
-matchlock list
+# With secrets (MITM replaces placeholder in HTTP requests)
+export ANTHROPIC_API_KEY=sk-xxx
+matchlock run --image python:3.12-alpine \
+  --secret ANTHROPIC_API_KEY@api.anthropic.com \
+  python call_api.py
 
-# Kill a sandbox
-matchlock kill vm-abc123
+# Lifecycle management
+matchlock list                     # List sandboxes
+matchlock kill vm-abc123           # Kill a sandbox
+matchlock kill --all               # Kill all running sandboxes
+matchlock rm vm-abc123             # Remove stopped sandbox state
+matchlock prune                    # Remove all stopped/crashed state
 ```
 
-### How Container Images Work
+### How It Works
 
-When you run `matchlock run --image <container-image>`:
-
-1. **First run**: Pulls the image, extracts layers, injects matchlock components, creates ext4 rootfs
-2. **Subsequent runs**: Uses cached rootfs (instant startup)
-
-Images are cached in `~/.cache/matchlock/images/` by digest.
-
-```bash
-# First run - builds rootfs (~30s for alpine, longer for larger images)
-$ sudo matchlock run --image alpine:latest cat /etc/alpine-release
-Built rootfs from alpine:latest (527.0 MB)
-3.21.0
-
-# Second run - uses cache (instant)
-$ sudo matchlock run --image alpine:latest cat /etc/alpine-release
-Using cached image alpine:latest
-3.21.0
-```
+1. **`matchlock run --image alpine:latest`** pulls the OCI image, extracts layers, injects guest components, creates an ext4 rootfs, and boots a micro-VM
+2. Subsequent runs use the cached rootfs for instant startup (`~/.cache/matchlock/images/`)
+3. When `--allow-host` or `--secret` is specified, all traffic is routed through a transparent MITM proxy that enforces policy
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                    Host                          │
+│                     Host                         │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────┐  │
-│  │  Matchlock  │  │  Policy     │  │   VFS   │  │
-│  │    CLI      │──│  Engine     │  │ Server  │  │
+│  │  Matchlock  │  │   Policy    │  │   VFS   │  │
+│  │    CLI      │──│   Engine    │  │  Server  │  │
 │  └─────────────┘  └─────────────┘  └─────────┘  │
 │         │              │                 │       │
 │         ▼              ▼                 │       │
-│  ┌─────────────────────────────┐        │       │
-│  │  Transparent Proxy + TLS MITM │        │       │
-│  └─────────────────────────────┘        │       │
-│              │                          │       │
-├──────────────│──────────────────────────│───────┤
-│              │      Vsock               │       │
-│  ┌───────────┴──────────────────────────┴─────┐ │
-│  │            Firecracker VM                  │ │
-│  │  ┌─────────────┐  ┌─────────────────────┐  │ │
-│  │  │ Guest Agent │  │ /workspace (FUSE)   │  │ │
-│  │  └─────────────┘  └─────────────────────┘  │ │
-│  │       Any OCI Image (Alpine, Ubuntu, etc)  │ │
-│  └────────────────────────────────────────────┘ │
+│  ┌──────────────────────────────┐        │       │
+│  │ Transparent Proxy + TLS MITM │        │       │
+│  └──────────────────────────────┘        │       │
+│              │                           │       │
+├──────────────│───────────────────────────│───────┤
+│              │       Vsock               │       │
+│  ┌───────────┴───────────────────────────┴─────┐ │
+│  │              Micro-VM                       │ │
+│  │  ┌─────────────┐  ┌─────────────────────┐   │ │
+│  │  │ Guest Agent │  │ /workspace (FUSE)   │   │ │
+│  │  └─────────────┘  └─────────────────────┘   │ │
+│  │       Any OCI Image (Alpine, Ubuntu, etc)   │ │
+│  └─────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────┘
 ```
 
+## Network Modes
+
+**Linux**: nftables transparent proxy — DNAT redirects ports 80/443 to host proxy, kernel handles TCP/IP.
+
+**macOS (Apple Silicon)**:
+- **NAT mode** (default): Apple Virtualization.framework built-in NAT with DHCP — no interception
+- **Interception mode** (when `--allow-host` or `--secret` is used): gVisor userspace TCP/IP stack intercepts all connections at L4
+
 ## Documentation
 
-- [AGENTS.md](AGENTS.md) - Developer reference
-
-## Build Commands
-
-```bash
-make build          # Build CLI
-make build-all      # Build CLI + guest binaries
-make test           # Run tests
-make kernel         # Build kernel
-make help           # Show all targets
-```
-
-## Configuration
-
-Environment variables:
-
-```bash
-export MATCHLOCK_KERNEL=~/.cache/matchlock/kernel
-```
-
-## Project Structure
-
-```
-matchlock/
-├── cmd/
-│   ├── matchlock/        # CLI
-│   ├── guest-agent/      # In-VM command executor
-│   └── guest-fused/      # In-VM FUSE daemon
-├── pkg/
-│   ├── api/              # Core types
-│   ├── image/            # OCI image builder
-│   ├── sandbox/          # Sandbox management
-│   ├── vm/linux/         # Firecracker backend
-│   ├── net/              # Network interception + TLS MITM
-│   ├── policy/           # Security policies
-│   ├── vfs/              # Virtual filesystem
-│   ├── vsock/            # Host-guest communication
-│   ├── state/            # VM state management
-│   └── rpc/              # JSON-RPC handler
-├── scripts/              # Build scripts
-└── examples/             # SDK examples
-```
-
-## Requirements
-
-| Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| Linux Kernel | 4.14 | 5.10+ |
-| KVM | Required | - |
-| RAM | 4GB | 8GB |
-| Disk | 10GB | 20GB |
+See [AGENTS.md](AGENTS.md) for full developer reference — project structure, build commands, component details, vsock protocol, and kernel configuration.
 
 ## License
 
