@@ -133,6 +133,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 		SubnetCIDR:      subnetInfo.GatewayIP + "/24",
 		Workspace:       workspace,
 		UseInterception: needsInterception,
+		Privileged:      config.Privileged,
 		PrebuiltRootfs:  prebuiltRootfs,
 	}
 

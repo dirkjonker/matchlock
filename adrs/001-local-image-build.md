@@ -1,6 +1,6 @@
 # ADR-001: Local Image Build and Management
 
-**Status:** Accepted (Phase 1 implemented)  
+**Status:** Accepted (Phase 1 + Phase 2 implemented)  
 **Date:** 2026-02-07  
 **Author:** Jingkai He
 

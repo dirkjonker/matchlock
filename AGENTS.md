@@ -136,6 +136,13 @@ matchlock prune                    # Remove all stopped/crashed state
 # Pre-build rootfs (caches for faster startup)
 matchlock build alpine:latest
 
+# Build from Dockerfile (uses BuildKit-in-VM with privileged mode)
+matchlock build -f Dockerfile -t myapp:latest .
+matchlock build -f Dockerfile -t myapp:latest ./myapp
+
+# Privileged mode (skips in-guest seccomp/cap restrictions)
+matchlock run --privileged --image moby/buildkit:rootless -it sh
+
 # RPC mode (for programmatic access)
 matchlock rpc
 ```

@@ -139,6 +139,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 		GuestIP:    subnetInfo.GuestIP,
 		SubnetCIDR: subnetInfo.GatewayIP + "/24",
 		Workspace:  workspace,
+		Privileged: config.Privileged,
 	}
 
 	machine, err := backend.Create(ctx, vmConfig)

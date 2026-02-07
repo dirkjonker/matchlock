@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -82,10 +83,16 @@ Wildcard Patterns for --allow-host:
 }
 
 var buildCmd = &cobra.Command{
-	Use:   "build <image>",
-	Short: "Build rootfs from container image",
+	Use:   "build [flags] <image-or-context>",
+	Short: "Build rootfs from container image or Dockerfile",
+	Long: `Build a rootfs from a container image, or build from a Dockerfile using BuildKit-in-VM.
+
+When used with -f/--file, boots a privileged VM with BuildKit to build the Dockerfile.
+The build context is the directory argument (defaults to current directory).`,
 	Example: `  matchlock build alpine:latest
-  matchlock build -t myapp:latest alpine:latest`,
+  matchlock build -t myapp:latest alpine:latest
+  matchlock build -f Dockerfile -t myapp:latest .
+  matchlock build -f Dockerfile -t myapp:latest ./myapp`,
 	Args: cobra.ExactArgs(1),
 	RunE: runBuild,
 }
@@ -155,6 +162,7 @@ func init() {
 	runCmd.Flags().BoolP("interactive", "i", false, "Keep STDIN open")
 	runCmd.Flags().Bool("pull", false, "Always pull image from registry (ignore cache)")
 	runCmd.Flags().Bool("rm", true, "Remove sandbox after command exits (set --rm=false to keep running)")
+	runCmd.Flags().Bool("privileged", false, "Skip in-guest security restrictions (seccomp, cap drop, no_new_privs)")
 	runCmd.Flags().StringP("workdir", "w", "", "Working directory inside the sandbox (default: workspace path)")
 	runCmd.MarkFlagRequired("image")
 
@@ -179,6 +187,9 @@ func init() {
 
 	buildCmd.Flags().Bool("pull", false, "Always pull image from registry (ignore cache)")
 	buildCmd.Flags().StringP("tag", "t", "", "Tag the image locally")
+	buildCmd.Flags().StringP("file", "f", "", "Path to Dockerfile (enables BuildKit-in-VM build)")
+	buildCmd.Flags().Int("build-cpus", 2, "Number of CPUs for BuildKit VM")
+	buildCmd.Flags().Int("build-memory", 2048, "Memory in MB for BuildKit VM")
 
 	listCmd.Flags().Bool("running", false, "Show only running VMs")
 	viper.BindPFlag("list.running", listCmd.Flags().Lookup("running"))
@@ -226,6 +237,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	rm, _ := cmd.Flags().GetBool("rm")
 
 	workdir, _ := cmd.Flags().GetString("workdir")
+	privileged, _ := cmd.Flags().GetBool("privileged")
 	interactiveMode := tty && interactive
 	pull, _ := cmd.Flags().GetBool("pull")
 	diskSize, _ := cmd.Flags().GetInt("disk-size")
@@ -298,7 +310,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 	}
 
 	config := &api.Config{
-		Image: imageName,
+		Image:      imageName,
+		Privileged: privileged,
 		Resources: &api.Resources{
 			CPUs:           cpus,
 			MemoryMB:       memory,
@@ -459,10 +472,15 @@ func runExecInteractive(ctx context.Context, execSocketPath, command, workdir st
 }
 
 func runBuild(cmd *cobra.Command, args []string) error {
-	imageRef := args[0]
-	pull, _ := cmd.Flags().GetBool("pull")
+	dockerfile, _ := cmd.Flags().GetString("file")
 	tag, _ := cmd.Flags().GetString("tag")
+	pull, _ := cmd.Flags().GetBool("pull")
 
+	if dockerfile != "" {
+		return runDockerfileBuild(cmd, args[0], dockerfile, tag)
+	}
+
+	imageRef := args[0]
 	builder := image.NewBuilder(&image.BuildOptions{
 		ForcePull: pull,
 	})
@@ -486,6 +504,188 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Built: %s\n", result.RootfsPath)
 	fmt.Printf("Digest: %s\n", result.Digest)
 	fmt.Printf("Size: %.1f MB\n", float64(result.Size)/(1024*1024))
+	return nil
+}
+
+func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) error {
+	if tag == "" {
+		return fmt.Errorf("-t/--tag is required when building from a Dockerfile")
+	}
+
+	cpus, _ := cmd.Flags().GetInt("build-cpus")
+	memory, _ := cmd.Flags().GetInt("build-memory")
+
+	// Resolve paths
+	absContext, err := filepath.Abs(contextDir)
+	if err != nil {
+		return fmt.Errorf("resolve context dir: %w", err)
+	}
+	if info, err := os.Stat(absContext); err != nil || !info.IsDir() {
+		return fmt.Errorf("build context %q is not a directory", contextDir)
+	}
+
+	absDockerfile, err := filepath.Abs(dockerfile)
+	if err != nil {
+		return fmt.Errorf("resolve Dockerfile: %w", err)
+	}
+	if _, err := os.Stat(absDockerfile); err != nil {
+		return fmt.Errorf("Dockerfile not found: %s", dockerfile)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		cancel()
+	}()
+
+	// Step 1: Build the BuildKit rootless image
+	buildkitImage := "moby/buildkit:rootless"
+	fmt.Fprintf(os.Stderr, "Preparing BuildKit image (%s)...\n", buildkitImage)
+	builder := image.NewBuilder(&image.BuildOptions{})
+	buildResult, err := builder.Build(ctx, buildkitImage)
+	if err != nil {
+		return fmt.Errorf("building BuildKit rootfs: %w", err)
+	}
+
+	// Step 2: Create a privileged sandbox with the build context mounted
+	config := &api.Config{
+		Image:      buildkitImage,
+		Privileged: true,
+		Resources: &api.Resources{
+			CPUs:           cpus,
+			MemoryMB:       memory,
+			DiskSizeMB:     api.DefaultDiskSizeMB,
+			TimeoutSeconds: 1800,
+		},
+		Network: &api.NetworkConfig{
+			AllowedHosts: []string{"*"},
+		},
+		VFS: &api.VFSConfig{
+			Workspace: "/workspace",
+			Mounts: map[string]api.MountConfig{
+				"/build-context": {Type: "real_fs", HostPath: absContext, Readonly: true},
+				"/workspace":     {Type: "memory"},
+			},
+		},
+	}
+
+	sandboxOpts := &sandbox.Options{RootfsPath: buildResult.RootfsPath}
+	sb, err := sandbox.New(ctx, config, sandboxOpts)
+	if err != nil {
+		return fmt.Errorf("creating BuildKit sandbox: %w", err)
+	}
+	defer sb.Close()
+
+	if err := sb.Start(ctx); err != nil {
+		return fmt.Errorf("starting BuildKit sandbox: %w", err)
+	}
+
+	// Write Dockerfile into the sandbox VFS if it's outside the context
+	dockerfileName := filepath.Base(absDockerfile)
+	dockerfileInContext := filepath.Join(absContext, dockerfileName)
+	dockerfileGuestPath := "/build-context/" + dockerfileName
+
+	if _, err := os.Stat(dockerfileInContext); os.IsNotExist(err) {
+		// Dockerfile is outside the build context; write it to /workspace/Dockerfile
+		dockerfileContent, err := os.ReadFile(absDockerfile)
+		if err != nil {
+			return fmt.Errorf("read Dockerfile: %w", err)
+		}
+		if err := sb.WriteFile(ctx, "/workspace/Dockerfile", dockerfileContent, 0644); err != nil {
+			return fmt.Errorf("write Dockerfile to sandbox: %w", err)
+		}
+		dockerfileGuestPath = "/workspace/Dockerfile"
+	}
+
+	// Step 3: Start BuildKit daemon and run the build
+	fmt.Fprintf(os.Stderr, "Starting BuildKit daemon...\n")
+
+	startDaemon := `
+export BUILDKITD_FLAGS="--oci-worker-no-process-sandbox"
+export HOME=/tmp/buildkit
+mkdir -p $HOME/.local/tmp
+buildkitd --root $HOME/.local/tmp/buildkitd --addr unix:///tmp/buildkit.sock &
+BKPID=$!
+for i in $(seq 1 30); do
+  if [ -S /tmp/buildkit.sock ]; then break; fi
+  sleep 1
+done
+if [ ! -S /tmp/buildkit.sock ]; then
+  echo "BuildKit daemon failed to start" >&2
+  exit 1
+fi
+echo "ready"
+`
+	result, execErr := sb.Exec(ctx, startDaemon, &api.ExecOptions{
+		Stdout: os.Stderr,
+		Stderr: os.Stderr,
+	})
+	if execErr != nil {
+		return fmt.Errorf("starting BuildKit daemon: %w", execErr)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("BuildKit daemon failed (exit %d)", result.ExitCode)
+	}
+
+	fmt.Fprintf(os.Stderr, "Building image from %s...\n", dockerfile)
+
+	buildCmd := fmt.Sprintf(
+		`export HOME=/tmp/buildkit; buildctl --addr unix:///tmp/buildkit.sock build `+
+			`--frontend dockerfile.v0 `+
+			`--local context=/build-context `+
+			`--local dockerfile=%s `+
+			`--output type=oci,dest=/workspace/image.tar`,
+		filepath.Dir(dockerfileGuestPath),
+	)
+	result, execErr = sb.Exec(ctx, buildCmd, &api.ExecOptions{
+		Stdout: os.Stderr,
+		Stderr: os.Stderr,
+	})
+	if execErr != nil {
+		return fmt.Errorf("BuildKit build: %w", execErr)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("BuildKit build failed (exit %d)", result.ExitCode)
+	}
+
+	// Step 4: Read the OCI tarball from VFS and import into local store
+	fmt.Fprintf(os.Stderr, "Importing built image as %s...\n", tag)
+
+	tarballData, err := sb.ReadFile(ctx, "/workspace/image.tar")
+	if err != nil {
+		return fmt.Errorf("read built image: %w", err)
+	}
+
+	tmpFile, err := os.CreateTemp("", "matchlock-build-*.tar")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.Write(tarballData); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("write temp tarball: %w", err)
+	}
+	tmpFile.Close()
+
+	importFile, err := os.Open(tmpFile.Name())
+	if err != nil {
+		return fmt.Errorf("open temp tarball: %w", err)
+	}
+	defer importFile.Close()
+
+	importResult, err := builder.Import(ctx, importFile, tag)
+	if err != nil {
+		return fmt.Errorf("import built image: %w", err)
+	}
+
+	fmt.Printf("Successfully built and tagged %s\n", tag)
+	fmt.Printf("Rootfs: %s\n", importResult.RootfsPath)
+	fmt.Printf("Size: %.1f MB\n", float64(importResult.Size)/(1024*1024))
 	return nil
 }
 
