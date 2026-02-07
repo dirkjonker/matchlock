@@ -180,8 +180,21 @@ matchlock rpc
 - Extracts image layers and converts to ext4 rootfs
 - Injects matchlock guest components (guest-agent, guest-fused)
 - Creates minimal init script that runs as PID 1
-- Caches built images by digest in `~/.cache/matchlock/images/`
+- Caches built images by digest in `~/.cache/matchlock/images/` with `metadata.json` (original tag, digest, size, timestamp, source)
 - Supports any Linux container image (Alpine, Ubuntu, Debian, etc.)
+- **Local store** (`~/.cache/matchlock/images/local/`): Stores locally-built/imported images with `rootfs.ext4` + `metadata.json` per tag
+- **Import** (`Builder.Import`): Reads Docker/OCI tarballs (`docker save` format) via `go-containerregistry`, extracts layers, creates ext4 rootfs, saves to local store
+- **Dockerfile build**: Boots a privileged BuildKit-in-VM, mounts build context via VFS, runs `buildctl`, streams result tarball via `ReadFileTo`, imports into local store
+
+### Sandbox Common (`pkg/sandbox/sandbox_common.go`)
+- Shared sandbox logic extracted from platform-specific files (`sandbox_linux.go`, `sandbox_darwin.go`)
+- Contains free functions: `prepareExecEnv()`, `execCommand()`, `writeFile()`, `readFile()`, `readFileTo()`, `listFiles()`
+- Platform files delegate to these via one-line wrappers
+- `ReadFileTo(ctx, path, io.Writer)` streams file content directly to a writer (used for tarball extraction)
+
+### Signal Helper (`cmd/matchlock/signal.go`)
+- `contextWithSignal(parent context.Context) (context.Context, context.CancelFunc)` — cancels on SIGINT/SIGTERM and cleans up the signal handler when context is done
+- Used by `cmd_build.go`, `cmd_exec.go`, `cmd_run.go`, `cmd_rpc.go` to replace duplicated signal boilerplate
 
 ### Exec Relay (`pkg/sandbox/exec_relay.go`)
 - Unix socket server (`~/.matchlock/vms/{id}/exec.sock`) enabling cross-process exec
@@ -347,4 +360,4 @@ type VFSConfig struct {
 Uses gVisor's `go` branch (`gvisor.dev/gvisor@go`) which is specifically maintained for Go imports. The `master` branch has test file conflicts (`bridge_test.go` declares wrong package). See [PR #10593](https://github.com/google/gvisor/pull/10593) for details. gVisor's userspace TCP/IP stack is only used on macOS (where nftables is unavailable); Linux uses nftables-based transparent proxy instead.
 
 ### Test Coverage
-Tests implemented for: vfs (memory, overlay, readonly, router), policy, net (tls). Additional tests needed for: vm/linux, rpc, state, vsock (require mocking).
+Tests implemented for: vfs (memory, overlay, readonly, router), policy, net (tls), image (import, store). Acceptance tests for: Dockerfile build. Additional tests needed for: vm/linux, rpc, state, vsock (require mocking).
