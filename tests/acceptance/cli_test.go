@@ -160,7 +160,9 @@ func TestCLIRunNoCommand(t *testing.T) {
 }
 
 func TestCLIRunMultiWordCommand(t *testing.T) {
-	stdout, _, exitCode := runCLIWithTimeout(t, 2*time.Minute, "run", "--image", "alpine:latest", "sh", "-c", "echo foo bar")
+	// "--" separates matchlock flags from the guest command so cobra
+	// doesn't interpret -c as a flag.
+	stdout, _, exitCode := runCLIWithTimeout(t, 2*time.Minute, "run", "--image", "alpine:latest", "--", "sh", "-c", "echo foo bar")
 	if exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0", exitCode)
 	}
@@ -275,7 +277,7 @@ func TestCLILifecycle(t *testing.T) {
 
 	// --- exec multiple commands ---
 	t.Run("exec-multi", func(t *testing.T) {
-		stdout, _, exitCode := runCLIWithTimeout(t, 30*time.Second, "exec", vmID, "sh", "-c", "echo one && echo two")
+		stdout, _, exitCode := runCLIWithTimeout(t, 30*time.Second, "exec", vmID, "--", "sh", "-c", "echo one && echo two")
 		if exitCode != 0 {
 			t.Fatalf("exec exit code = %d", exitCode)
 		}

@@ -1,17 +1,9 @@
 package api
 
-import "strings"
+import shellquote "github.com/kballard/go-shellquote"
 
-// ShellQuoteArgs joins command arguments into a single shell-safe string.
-// Arguments containing special characters are single-quoted.
+// ShellQuoteArgs joins command arguments into a single shell-safe string
+// using POSIX shell quoting rules.
 func ShellQuoteArgs(args []string) string {
-	quoted := make([]string, len(args))
-	for i, arg := range args {
-		if strings.ContainsAny(arg, " \t\n\"'`$\\!*?[]{}();<>&|") {
-			quoted[i] = "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
-		} else {
-			quoted[i] = arg
-		}
-	}
-	return strings.Join(quoted, " ")
+	return shellquote.Join(args...)
 }
