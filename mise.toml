@@ -14,7 +14,7 @@ KERNEL_VERSION = "6.1.137"
 OUTPUT_DIR = "{{env.HOME}}/.cache/matchlock"
 REGISTRY = "ghcr.io/jingkaihe/matchlock"
 
-VERSION = "{{exec(command='echo ${VERSION:-$(cat VERSION.txt)}')}}"
+VERSION = "{{exec(command='cat VERSION.txt')}}"
 GIT_COMMIT = "{{exec(command='echo ${GIT_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}')}}"
 BUILD_TIME = "{{exec(command='echo ${BUILD_TIME:-$(date -u \"+%a %b %d %H:%M:%S UTC %Y\")}')}}"
 VERSION_PKG = "github.com/jingkaihe/matchlock/pkg/version"
