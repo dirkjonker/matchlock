@@ -59,7 +59,9 @@ class Sandbox:
         return self.mount(guest_path, MountConfig(type="real_fs", host_path=host_path))
 
     def mount_host_dir_readonly(self, guest_path: str, host_path: str) -> Sandbox:
-        return self.mount(guest_path, MountConfig(type="real_fs", host_path=host_path, readonly=True))
+        return self.mount(
+            guest_path, MountConfig(type="real_fs", host_path=host_path, readonly=True)
+        )
 
     def mount_memory(self, guest_path: str) -> Sandbox:
         return self.mount(guest_path, MountConfig(type="memory"))

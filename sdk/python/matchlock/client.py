@@ -18,7 +18,6 @@ import base64
 import json
 import os
 import subprocess
-import sys
 import threading
 from typing import IO, Any, Callable
 
@@ -100,9 +99,7 @@ class Client:
             bufsize=1,
         )
 
-        self._reader_thread = threading.Thread(
-            target=self._reader_loop, daemon=True
-        )
+        self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
 
     def close(self) -> None:
@@ -145,7 +142,9 @@ class Client:
             return
         subprocess.run(
             [self._config.binary_path, "rm", vm_id],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
 
     # ── Reader loop ──────────────────────────────────────────────────
@@ -285,8 +284,7 @@ class Client:
             }
             if opts.secrets:
                 network["secrets"] = {
-                    s.name: {"value": s.value, "hosts": s.hosts}
-                    for s in opts.secrets
+                    s.name: {"value": s.value, "hosts": s.hosts} for s in opts.secrets
                 }
             params["network"] = network
 
@@ -354,7 +352,9 @@ class Client:
                 stderr.write(decoded)
                 stderr.flush()
 
-        result = self._send_request("exec_stream", params, on_notification=on_notification)
+        result = self._send_request(
+            "exec_stream", params, on_notification=on_notification
+        )
 
         return ExecStreamResult(
             exit_code=result["exit_code"],

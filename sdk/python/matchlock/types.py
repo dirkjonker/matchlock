@@ -142,6 +142,7 @@ class FileInfo:
 
 class MatchlockError(Exception):
     """Base exception for Matchlock errors."""
+
     pass
 
 
