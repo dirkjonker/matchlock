@@ -145,9 +145,9 @@ func runRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("building rootfs: %w", err)
 	}
 	if buildResult.Cached {
-		fmt.Printf("Using cached image %s\n", imageName)
+		fmt.Fprintf(os.Stderr, "Using cached image %s\n", imageName)
 	} else {
-		fmt.Printf("Built rootfs from %s (%.1f MB)\n", imageName, float64(buildResult.Size)/(1024*1024))
+		fmt.Fprintf(os.Stderr, "Built rootfs from %s (%.1f MB)\n", imageName, float64(buildResult.Size)/(1024*1024))
 	}
 	sandboxOpts := &sandbox.Options{RootfsPath: buildResult.RootfsPath}
 
