@@ -12,33 +12,32 @@ When your agent calls an API the real credentials are injected in-flight by the 
 
 ### Prerequisites
 
-- [mise](https://mise.jdx.dev/)
-- `e2fsprogs` (`mke2fs`, `debugfs`, `resize2fs`)
-  ```bash
-  # macOS (Homebrew)
-  brew install e2fsprogs
-
-  # Debian/Ubuntu
-  sudo apt-get install -y e2fsprogs
-
-  # RHEL/CentOS/Fedora
-  sudo dnf install -y e2fsprogs
-  ```
 - **Linux**: KVM support
 - **macOS**: Apple Silicon
 
 ### Install
 
 ```bash
-git clone https://github.com/jingkaihe/matchlock.git && cd matchlock
-mise install
-
-# macOS
-mise run darwin:setup
-
-# Linux
-mise run setup
+brew install jingkaihe/essentials/matchlock
 ```
+
+Or add the tap first:
+
+```bash
+brew tap jingkaihe/essentials
+brew install matchlock
+```
+
+#### Updating
+
+```bash
+brew update
+brew upgrade matchlock
+```
+
+#### Build from source
+
+If you prefer to build from source, see the [developer reference](AGENTS.md) for instructions using [mise](https://mise.jdx.dev/).
 
 ### Usage
 
