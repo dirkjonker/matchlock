@@ -552,6 +552,26 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 	}
 
 	// Step 2: Create a privileged sandbox with the build context mounted
+	// All VFS mounts must be under /workspace since guest-fused mounts FUSE there.
+	// Layout: /workspace/context (build context), /workspace/output (build output)
+	// The Dockerfile dir is either under context or written to /workspace/dockerfile/
+	dockerfileName := filepath.Base(absDockerfile)
+	dockerfileInContext := filepath.Join(absContext, dockerfileName)
+	dockerfileDir := filepath.Dir(absDockerfile)
+
+	mounts := map[string]api.MountConfig{
+		"/workspace":         {Type: "memory"},
+		"/workspace/context": {Type: "real_fs", HostPath: absContext, Readonly: true},
+		"/workspace/output":  {Type: "memory"},
+	}
+
+	guestDockerfileDir := "/workspace/context"
+	if _, err := os.Stat(dockerfileInContext); os.IsNotExist(err) {
+		// Dockerfile is outside the build context — mount its directory separately
+		mounts["/workspace/dockerfile"] = api.MountConfig{Type: "real_fs", HostPath: dockerfileDir, Readonly: true}
+		guestDockerfileDir = "/workspace/dockerfile"
+	}
+
 	config := &api.Config{
 		Image:      buildkitImage,
 		Privileged: true,
@@ -561,15 +581,10 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 			DiskSizeMB:     api.DefaultDiskSizeMB,
 			TimeoutSeconds: 1800,
 		},
-		Network: &api.NetworkConfig{
-			AllowedHosts: []string{"*"},
-		},
+		Network: &api.NetworkConfig{},
 		VFS: &api.VFSConfig{
 			Workspace: "/workspace",
-			Mounts: map[string]api.MountConfig{
-				"/build-context": {Type: "real_fs", HostPath: absContext, Readonly: true},
-				"/workspace":     {Type: "memory"},
-			},
+			Mounts:    mounts,
 		},
 	}
 
@@ -584,70 +599,59 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 		return fmt.Errorf("starting BuildKit sandbox: %w", err)
 	}
 
-	// Write Dockerfile into the sandbox VFS if it's outside the context
-	dockerfileName := filepath.Base(absDockerfile)
-	dockerfileInContext := filepath.Join(absContext, dockerfileName)
-	dockerfileGuestPath := "/build-context/" + dockerfileName
+	// Step 3: Start BuildKit daemon and run the build in a single exec
+	// We must combine daemon start + build into one exec call because each sb.Exec()
+	// spawns a separate process — a backgrounded daemon from one exec would be killed
+	// when that shell exits, before the next exec can use it.
+	fmt.Fprintf(os.Stderr, "Starting BuildKit daemon and building image from %s...\n", dockerfile)
 
-	if _, err := os.Stat(dockerfileInContext); os.IsNotExist(err) {
-		// Dockerfile is outside the build context; write it to /workspace/Dockerfile
-		dockerfileContent, err := os.ReadFile(absDockerfile)
-		if err != nil {
-			return fmt.Errorf("read Dockerfile: %w", err)
-		}
-		if err := sb.WriteFile(ctx, "/workspace/Dockerfile", dockerfileContent, 0644); err != nil {
-			return fmt.Errorf("write Dockerfile to sandbox: %w", err)
-		}
-		dockerfileGuestPath = "/workspace/Dockerfile"
-	}
+	execOpts := &api.ExecOptions{WorkingDir: "/"}
 
-	// Step 3: Start BuildKit daemon and run the build
-	fmt.Fprintf(os.Stderr, "Starting BuildKit daemon...\n")
-
-	startDaemon := `
-export BUILDKITD_FLAGS="--oci-worker-no-process-sandbox"
-export HOME=/tmp/buildkit
-mkdir -p $HOME/.local/tmp
-buildkitd --root $HOME/.local/tmp/buildkitd --addr unix:///tmp/buildkit.sock &
+	// Run BuildKit as root directly (no rootlesskit). The VM is already an isolated
+	// environment, so running buildkitd as root is safe. We use a helper script
+	// to avoid complex shell quoting.
+	//
+	// Key settings:
+	// - native snapshotter: avoids overlayfs xattr complexity
+	// - TMPDIR on ext4: ensures containerd-mount temp dirs support xattr
+	// - type=docker output: compatible with go-containerregistry tarball.ImageFromPath
+	buildScript := fmt.Sprintf(
+		`cat > /tmp/buildkit-run.sh << 'SCRIPT'
+export HOME=/root
+export TMPDIR=/var/lib/buildkit/tmp
+mkdir -p $TMPDIR
+SOCK=/tmp/buildkit.sock
+buildkitd --root /var/lib/buildkit \
+  --addr unix://$SOCK \
+  --oci-worker-snapshotter native \
+  >/tmp/buildkitd.log 2>&1 &
 BKPID=$!
-for i in $(seq 1 30); do
-  if [ -S /tmp/buildkit.sock ]; then break; fi
-  sleep 1
-done
-if [ ! -S /tmp/buildkit.sock ]; then
+for i in $(seq 1 30); do [ -S $SOCK ] && break; sleep 1; done
+if [ ! -S $SOCK ]; then
   echo "BuildKit daemon failed to start" >&2
+  cat /tmp/buildkitd.log >&2
   exit 1
 fi
-echo "ready"
-`
-	result, execErr := sb.Exec(ctx, startDaemon, &api.ExecOptions{
-		Stdout: os.Stderr,
-		Stderr: os.Stderr,
-	})
-	if execErr != nil {
-		return fmt.Errorf("starting BuildKit daemon: %w", execErr)
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("BuildKit daemon failed (exit %d)", result.ExitCode)
-	}
-
-	fmt.Fprintf(os.Stderr, "Building image from %s...\n", dockerfile)
-
-	buildCmd := fmt.Sprintf(
-		`export HOME=/tmp/buildkit; buildctl --addr unix:///tmp/buildkit.sock build `+
-			`--frontend dockerfile.v0 `+
-			`--local context=/build-context `+
-			`--local dockerfile=%s `+
-			`--output type=oci,dest=/workspace/image.tar`,
-		filepath.Dir(dockerfileGuestPath),
+echo "BuildKit daemon ready" >&2
+buildctl --addr unix://$SOCK build \
+  --frontend dockerfile.v0 \
+  --local context=/workspace/context \
+  --local dockerfile=%s \
+  --output type=docker,dest=/workspace/output/image.tar
+RC=$?
+[ $RC -ne 0 ] && { echo "=== buildkitd log ===" >&2; cat /tmp/buildkitd.log >&2; }
+kill $BKPID 2>/dev/null
+exit $RC
+SCRIPT
+`+`chmod +x /tmp/buildkit-run.sh && /tmp/buildkit-run.sh`,
+		guestDockerfileDir,
 	)
-	result, execErr = sb.Exec(ctx, buildCmd, &api.ExecOptions{
-		Stdout: os.Stderr,
-		Stderr: os.Stderr,
-	})
+	result, execErr := sb.Exec(ctx, buildScript, execOpts)
 	if execErr != nil {
 		return fmt.Errorf("BuildKit build: %w", execErr)
 	}
+	os.Stderr.Write(result.Stdout)
+	os.Stderr.Write(result.Stderr)
 	if result.ExitCode != 0 {
 		return fmt.Errorf("BuildKit build failed (exit %d)", result.ExitCode)
 	}
@@ -655,7 +659,7 @@ echo "ready"
 	// Step 4: Read the OCI tarball from VFS and import into local store
 	fmt.Fprintf(os.Stderr, "Importing built image as %s...\n", tag)
 
-	tarballData, err := sb.ReadFile(ctx, "/workspace/image.tar")
+	tarballData, err := sb.ReadFile(ctx, "/workspace/output/image.tar")
 	if err != nil {
 		return fmt.Errorf("read built image: %w", err)
 	}

@@ -312,6 +312,14 @@ Required kernel options for Firecracker v1.8+:
 - `CONFIG_CGROUPS=y` - Cgroup support (v1 and v2) with cpu, memory, pids, io, cpuset, freezer controllers
 - `CONFIG_USER_NS=y` - User namespaces for rootless BuildKit support
 
+Required kernel options for BuildKit-in-VM (privileged mode):
+- `CONFIG_BPF=y`, `CONFIG_BPF_SYSCALL=y` - BPF for runc cgroup device management
+- `CONFIG_EXT4_FS_XATTR=y`, `CONFIG_EXT4_FS_POSIX_ACL=y`, `CONFIG_EXT4_FS_SECURITY=y` - ext4 xattr support for container image layers
+- `CONFIG_TMPFS_XATTR=y` - tmpfs xattr support
+- `CONFIG_NAMESPACES=y`, `CONFIG_PID_NS=y`, `CONFIG_NET_NS=y`, `CONFIG_UTS_NS=y`, `CONFIG_IPC_NS=y` - All namespace types for runc
+- `CONFIG_SYSVIPC=y`, `CONFIG_POSIX_MQUEUE=y` - IPC primitives for container runtimes
+- `CONFIG_OVERLAY_FS=y` - Overlay filesystem for container layers
+
 ## Configuration
 
 ### Workspace Path
