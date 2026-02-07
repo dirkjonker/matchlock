@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -35,8 +36,8 @@ func init() {
 	buildCmd.Flags().Bool("pull", false, "Always pull image from registry (ignore cache)")
 	buildCmd.Flags().StringP("tag", "t", "", "Tag the image locally")
 	buildCmd.Flags().StringP("file", "f", "", "Path to Dockerfile (enables BuildKit-in-VM build)")
-	buildCmd.Flags().Int("build-cpus", 2, "Number of CPUs for BuildKit VM")
-	buildCmd.Flags().Int("build-memory", 2048, "Memory in MB for BuildKit VM")
+	buildCmd.Flags().Int("build-cpus", 0, "Number of CPUs for BuildKit VM (0 = all available)")
+	buildCmd.Flags().Int("build-memory", 0, "Memory in MB for BuildKit VM (0 = all available)")
 
 	rootCmd.AddCommand(buildCmd)
 }
@@ -84,6 +85,13 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 
 	cpus, _ := cmd.Flags().GetInt("build-cpus")
 	memory, _ := cmd.Flags().GetInt("build-memory")
+
+	if cpus == 0 {
+		cpus = runtime.NumCPU()
+	}
+	if memory == 0 {
+		memory = totalMemoryMB()
+	}
 
 	absContext, err := filepath.Abs(contextDir)
 	if err != nil {
@@ -164,7 +172,16 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 
 	fmt.Fprintf(os.Stderr, "Starting BuildKit daemon and building image from %s...\n", dockerfile)
 
-	execOpts := &api.ExecOptions{WorkingDir: "/"}
+	execOpts := &api.ExecOptions{
+		WorkingDir: "/",
+		Stdout:     os.Stderr,
+		Stderr:     os.Stderr,
+	}
+
+	filenameOpt := ""
+	if dockerfileName != "Dockerfile" {
+		filenameOpt = fmt.Sprintf("  --opt filename=%s \\\n", dockerfileName)
+	}
 
 	buildScript := fmt.Sprintf(
 		`cat > /tmp/buildkit-run.sh << 'SCRIPT'
@@ -188,7 +205,7 @@ buildctl --addr unix://$SOCK build \
   --frontend dockerfile.v0 \
   --local context=/workspace/context \
   --local dockerfile=%s \
-  --output type=docker,dest=/workspace/output/image.tar
+%s  --output type=docker,dest=/workspace/output/image.tar
 RC=$?
 [ $RC -ne 0 ] && { echo "=== buildkitd log ===" >&2; cat /tmp/buildkitd.log >&2; }
 kill $BKPID 2>/dev/null
@@ -196,13 +213,12 @@ exit $RC
 SCRIPT
 `+`chmod +x /tmp/buildkit-run.sh && /tmp/buildkit-run.sh`,
 		guestDockerfileDir,
+		filenameOpt,
 	)
 	result, execErr := sb.Exec(ctx, buildScript, execOpts)
 	if execErr != nil {
 		return fmt.Errorf("BuildKit build: %w", execErr)
 	}
-	os.Stderr.Write(result.Stdout)
-	os.Stderr.Write(result.Stderr)
 	if result.ExitCode != 0 {
 		return fmt.Errorf("BuildKit build failed (exit %d)", result.ExitCode)
 	}
