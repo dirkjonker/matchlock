@@ -147,29 +147,31 @@ func (tp *TransparentProxy) handleHTTPS(conn net.Conn, dstIP string, dstPort int
 func (tp *TransparentProxy) handlePassthrough(conn net.Conn, dstIP string, dstPort int) {
 	defer conn.Close()
 
-	host := fmt.Sprintf("%s:%d", dstIP, dstPort)
-	if !tp.policy.IsHostAllowed(host) {
-		tp.emitBlockedEvent(host, "host not in allowlist")
-		return
-	}
-
+	host := net.JoinHostPort(dstIP, fmt.Sprintf("%d", dstPort))
 	if !tp.policy.IsHostAllowed(dstIP) {
 		tp.emitBlockedEvent(host, "host not in allowlist")
 		return
 	}
 
-	realConn, err := net.DialTimeout("tcp", net.JoinHostPort(dstIP, fmt.Sprintf("%d", dstPort)), 30*time.Second)
+	realConn, err := net.DialTimeout("tcp", host, 30*time.Second)
 	if err != nil {
 		return
 	}
 	defer realConn.Close()
 
-	done := make(chan struct{})
+	done := make(chan struct{}, 2)
 	go func() {
 		io.Copy(realConn, conn)
-		close(done)
+		done <- struct{}{}
 	}()
-	io.Copy(conn, realConn)
+	go func() {
+		io.Copy(conn, realConn)
+		done <- struct{}{}
+	}()
+
+	<-done
+	conn.SetDeadline(time.Now())
+	realConn.SetDeadline(time.Now())
 	<-done
 }
 

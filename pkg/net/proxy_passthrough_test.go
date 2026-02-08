@@ -114,6 +114,89 @@ func TestHandlePassthrough_EmptyAllowlist(t *testing.T) {
 	}
 }
 
+func TestHandlePassthrough_UpstreamRefused(t *testing.T) {
+	tp := &TransparentProxy{
+		policy: policy.NewEngine(&api.NetworkConfig{
+			AllowedHosts: []string{"127.0.0.1"},
+		}),
+		events: make(chan api.Event, 10),
+	}
+
+	// Use a port with nothing listening — connection refused
+	client, server := net.Pipe()
+	defer client.Close()
+
+	done := make(chan struct{})
+	go func() {
+		tp.handlePassthrough(server, "127.0.0.1", 1)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handlePassthrough should return when upstream is unreachable")
+	}
+}
+
+func TestHandlePassthrough_HalfClose(t *testing.T) {
+	// Start a server that writes a response then closes its write side
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		// Read one message, echo it, then close
+		buf := make([]byte, 64)
+		n, _ := conn.Read(buf)
+		conn.Write(buf[:n])
+		conn.Close()
+	}()
+
+	tp := &TransparentProxy{
+		policy: policy.NewEngine(&api.NetworkConfig{
+			AllowedHosts: []string{"127.0.0.1"},
+		}),
+		events: make(chan api.Event, 10),
+	}
+
+	client, server := net.Pipe()
+	defer client.Close()
+
+	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
+
+	done := make(chan struct{})
+	go func() {
+		tp.handlePassthrough(server, "127.0.0.1", mustAtoi(portStr))
+		close(done)
+	}()
+
+	msg := []byte("ping")
+	client.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	client.Write(msg)
+
+	buf := make([]byte, len(msg))
+	client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	io.ReadFull(client, buf)
+
+	if string(buf) != string(msg) {
+		t.Errorf("expected %q, got %q", msg, buf)
+	}
+
+	// handlePassthrough should exit cleanly after upstream closes
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handlePassthrough should have exited after upstream closed")
+	}
+}
+
 func startEchoServer(t *testing.T) net.Listener {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
