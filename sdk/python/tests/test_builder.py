@@ -65,6 +65,7 @@ class TestSandboxChaining:
         assert isinstance(s.allow_host("x.com"), Sandbox)
         assert isinstance(s.block_private_ips(), Sandbox)
         assert isinstance(s.add_secret("k", "v"), Sandbox)
+        assert isinstance(s.with_dns_servers("1.1.1.1"), Sandbox)
         assert isinstance(s.mount("/p", MountConfig()), Sandbox)
         assert isinstance(s.mount_host_dir("/g", "/h"), Sandbox)
         assert isinstance(s.mount_host_dir_readonly("/g", "/h"), Sandbox)
@@ -93,6 +94,23 @@ class TestSandboxNetwork:
     def test_block_private_ips(self):
         opts = Sandbox("img").block_private_ips().options()
         assert opts.block_private_ips is True
+
+    def test_dns_servers(self):
+        opts = Sandbox("img").with_dns_servers("1.1.1.1", "1.0.0.1").options()
+        assert opts.dns_servers == ["1.1.1.1", "1.0.0.1"]
+
+    def test_dns_servers_chained(self):
+        opts = (
+            Sandbox("img")
+            .with_dns_servers("1.1.1.1")
+            .with_dns_servers("8.8.8.8")
+            .options()
+        )
+        assert opts.dns_servers == ["1.1.1.1", "8.8.8.8"]
+
+    def test_dns_servers_default_empty(self):
+        opts = Sandbox("img").options()
+        assert opts.dns_servers == []
 
 
 class TestSandboxSecrets:

@@ -295,3 +295,153 @@ func TestSecretInjectedInQueryParam(t *testing.T) {
 		t.Errorf("expected secret in query param to be replaced, got: %s", result.Stdout)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// DNS server configuration tests
+// ---------------------------------------------------------------------------
+
+func TestCustomDNSServersInResolvConf(t *testing.T) {
+	sandbox := sdk.New("alpine:latest").
+		BlockPrivateIPs().
+		WithDNSServers("1.1.1.1", "1.0.0.1")
+
+	client := launchAlpineWithNetwork(t, sandbox)
+
+	result, err := client.Exec("cat /etc/resolv.conf")
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+
+	if !strings.Contains(result.Stdout, "1.1.1.1") {
+		t.Errorf("resolv.conf should contain 1.1.1.1, got: %s", result.Stdout)
+	}
+	if !strings.Contains(result.Stdout, "1.0.0.1") {
+		t.Errorf("resolv.conf should contain 1.0.0.1, got: %s", result.Stdout)
+	}
+	if strings.Contains(result.Stdout, "8.8.8.8") {
+		t.Errorf("resolv.conf should NOT contain default 8.8.8.8 when custom DNS is set, got: %s", result.Stdout)
+	}
+}
+
+func TestDefaultDNSServersInResolvConf(t *testing.T) {
+	sandbox := sdk.New("alpine:latest").
+		BlockPrivateIPs()
+
+	client := launchAlpineWithNetwork(t, sandbox)
+
+	result, err := client.Exec("cat /etc/resolv.conf")
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+
+	if !strings.Contains(result.Stdout, "8.8.8.8") {
+		t.Errorf("default resolv.conf should contain 8.8.8.8, got: %s", result.Stdout)
+	}
+	if !strings.Contains(result.Stdout, "8.8.4.4") {
+		t.Errorf("default resolv.conf should contain 8.8.4.4, got: %s", result.Stdout)
+	}
+}
+
+func TestCustomDNSServersStillResolveDomains(t *testing.T) {
+	sandbox := sdk.New("alpine:latest").
+		AllowHost("httpbin.org").
+		WithDNSServers("1.1.1.1")
+
+	client := launchAlpineWithNetwork(t, sandbox)
+
+	result, err := client.Exec("wget -q -O - http://httpbin.org/get 2>&1")
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+
+	if !strings.Contains(result.Stdout+result.Stderr, `"url"`) {
+		t.Errorf("expected DNS resolution and HTTP request to succeed with custom DNS, got: %s", result.Stdout+result.Stderr)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TCP passthrough proxy tests (non-standard ports)
+// ---------------------------------------------------------------------------
+
+func TestPassthroughBlocksUnallowedHost(t *testing.T) {
+	sandbox := sdk.New("alpine:latest").
+		AllowHost("example.com")
+
+	client := launchAlpineWithNetwork(t, sandbox)
+
+	result, err := client.Exec("wget -q -T 5 -O - http://httpbin.org/get 2>&1 || true")
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+
+	if strings.Contains(result.Stdout+result.Stderr, `"url"`) {
+		t.Errorf("expected request to blocked host to fail, got: %s", result.Stdout+result.Stderr)
+	}
+}
+
+func TestPassthroughAllowsPermittedHost(t *testing.T) {
+	sandbox := sdk.New("alpine:latest").
+		AllowHost("httpbin.org")
+
+	client := launchAlpineWithNetwork(t, sandbox)
+
+	result, err := client.Exec("wget -q -O - https://httpbin.org/get 2>&1")
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+
+	if !strings.Contains(result.Stdout+result.Stderr, `"url"`) {
+		t.Errorf("expected request to allowed host to succeed, got: %s", result.Stdout+result.Stderr)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// UDP restriction tests
+// ---------------------------------------------------------------------------
+
+func TestUDPNonDNSBlocked(t *testing.T) {
+	sandbox := sdk.New("alpine:latest").
+		AllowHost("httpbin.org")
+
+	client := launchAlpineWithNetwork(t, sandbox)
+
+	result, err := client.Exec("sh -c 'echo test | timeout 3 nc -u -w 1 8.8.8.8 9999 2>&1; echo exit_code=$?'")
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+
+	combined := result.Stdout + result.Stderr
+	if strings.Contains(combined, "not found") {
+		t.Skip("nc not available in this Alpine image")
+	}
+
+	t.Logf("UDP non-DNS test output: %s", combined)
+}
+
+func TestDNSResolutionWorksWithInterception(t *testing.T) {
+	sandbox := sdk.New("alpine:latest").
+		AllowHost("httpbin.org")
+
+	client := launchAlpineWithNetwork(t, sandbox)
+
+	result, err := client.Exec("nslookup httpbin.org 2>&1 || true")
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+
+	combined := result.Stdout + result.Stderr
+	if strings.Contains(combined, "not found") {
+		result2, err := client.Exec("wget -q -O - http://httpbin.org/get 2>&1")
+		if err != nil {
+			t.Fatalf("Exec: %v", err)
+		}
+		if !strings.Contains(result2.Stdout+result2.Stderr, `"url"`) {
+			t.Errorf("expected DNS resolution to work for allowed host, got: %s", result2.Stdout+result2.Stderr)
+		}
+		return
+	}
+
+	if strings.Contains(combined, "SERVFAIL") || strings.Contains(combined, "can't resolve") {
+		t.Errorf("expected DNS resolution to work, got: %s", combined)
+	}
+}

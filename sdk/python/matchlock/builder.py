@@ -51,6 +51,10 @@ class Sandbox:
         self._opts.secrets.append(Secret(name=name, value=value, hosts=list(hosts)))
         return self
 
+    def with_dns_servers(self, *servers: str) -> Sandbox:
+        self._opts.dns_servers.extend(servers)
+        return self
+
     def mount(self, guest_path: str, config: MountConfig) -> Sandbox:
         self._opts.mounts[guest_path] = config
         return self

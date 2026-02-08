@@ -86,6 +86,40 @@ func TestBuilderWorkspace(t *testing.T) {
 	}
 }
 
+func TestBuilderDNSServers(t *testing.T) {
+	opts := New("alpine:latest").
+		WithDNSServers("1.1.1.1", "1.0.0.1").
+		Options()
+
+	if len(opts.DNSServers) != 2 {
+		t.Fatalf("expected 2 DNS servers, got %d", len(opts.DNSServers))
+	}
+	if opts.DNSServers[0] != "1.1.1.1" || opts.DNSServers[1] != "1.0.0.1" {
+		t.Fatalf("unexpected DNS servers: %v", opts.DNSServers)
+	}
+}
+
+func TestBuilderDNSServersChained(t *testing.T) {
+	opts := New("alpine:latest").
+		WithDNSServers("1.1.1.1").
+		WithDNSServers("8.8.8.8").
+		Options()
+
+	if len(opts.DNSServers) != 2 {
+		t.Fatalf("expected 2 DNS servers after chaining, got %d", len(opts.DNSServers))
+	}
+	if opts.DNSServers[0] != "1.1.1.1" || opts.DNSServers[1] != "8.8.8.8" {
+		t.Fatalf("unexpected DNS servers: %v", opts.DNSServers)
+	}
+}
+
+func TestBuilderDNSServersDefaultEmpty(t *testing.T) {
+	opts := New("alpine:latest").Options()
+	if len(opts.DNSServers) != 0 {
+		t.Fatalf("expected no DNS servers by default, got %v", opts.DNSServers)
+	}
+}
+
 func TestBuilderMounts(t *testing.T) {
 	opts := New("alpine:latest").
 		MountHostDir("/data", "/host/data").

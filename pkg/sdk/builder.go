@@ -83,6 +83,12 @@ func (b *SandboxBuilder) AddSecret(name, value string, hosts ...string) *Sandbox
 	return b
 }
 
+// WithDNSServers overrides the default DNS servers (8.8.8.8, 8.8.4.4).
+func (b *SandboxBuilder) WithDNSServers(servers ...string) *SandboxBuilder {
+	b.opts.DNSServers = append(b.opts.DNSServers, servers...)
+	return b
+}
+
 // Mount adds a VFS mount at the given guest path.
 func (b *SandboxBuilder) Mount(guestPath string, cfg MountConfig) *SandboxBuilder {
 	if b.opts.Mounts == nil {
