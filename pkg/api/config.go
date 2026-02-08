@@ -22,6 +22,14 @@ type Config struct {
 	Network    *NetworkConfig    `json:"network,omitempty"`
 	VFS        *VFSConfig        `json:"vfs,omitempty"`
 	Env        map[string]string `json:"env,omitempty"`
+	ExtraDisks []DiskMount       `json:"extra_disks,omitempty"`
+}
+
+// DiskMount describes a persistent ext4 disk image to attach as a block device.
+type DiskMount struct {
+	HostPath   string `json:"host_path"`
+	GuestMount string `json:"guest_mount"`
+	ReadOnly   bool   `json:"readonly,omitempty"`
 }
 
 type Resources struct {

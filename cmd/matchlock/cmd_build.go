@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 
 	"github.com/jingkaihe/matchlock/pkg/api"
 	"github.com/jingkaihe/matchlock/pkg/image"
@@ -37,6 +39,8 @@ func init() {
 	buildCmd.Flags().Int("build-cpus", 0, "Number of CPUs for BuildKit VM (0 = all available)")
 	buildCmd.Flags().Int("build-memory", 0, "Memory in MB for BuildKit VM (0 = all available)")
 	buildCmd.Flags().Int("build-disk", 10240, "Disk size in MB for BuildKit VM")
+	buildCmd.Flags().Bool("no-cache", false, "Do not use BuildKit build cache")
+	buildCmd.Flags().Int("build-cache-size", 10240, "BuildKit cache disk size in MB")
 
 	rootCmd.AddCommand(buildCmd)
 }
@@ -77,6 +81,62 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// ensureBuildCacheImage creates or reuses a persistent ext4 image for BuildKit cache.
+func ensureBuildCacheImage(sizeMB int) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get home dir: %w", err)
+	}
+
+	cacheDir := filepath.Join(home, ".cache", "matchlock", "buildkit")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return "", fmt.Errorf("create cache dir: %w", err)
+	}
+
+	cachePath := filepath.Join(cacheDir, "cache.ext4")
+	if _, err := os.Stat(cachePath); err == nil {
+		return cachePath, nil
+	}
+
+	sizeBytes := int64(sizeMB) * 1024 * 1024
+	f, err := os.Create(cachePath)
+	if err != nil {
+		return "", fmt.Errorf("create cache image: %w", err)
+	}
+	if err := f.Truncate(sizeBytes); err != nil {
+		f.Close()
+		os.Remove(cachePath)
+		return "", fmt.Errorf("truncate cache image: %w", err)
+	}
+	f.Close()
+
+	mkfs := exec.Command("mkfs.ext4", "-q", cachePath)
+	if out, err := mkfs.CombinedOutput(); err != nil {
+		os.Remove(cachePath)
+		return "", fmt.Errorf("mkfs.ext4: %w: %s", err, out)
+	}
+
+	return cachePath, nil
+}
+
+// lockBuildCache acquires an exclusive file lock on the build cache.
+// Returns the lock file which must be closed to release the lock.
+func lockBuildCache(cachePath string) (*os.File, error) {
+	lockPath := cachePath + ".lock"
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("open lock file: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Acquiring build cache lock...\n")
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("acquire lock: %w", err)
+	}
+
+	return f, nil
+}
+
 func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) error {
 	if tag == "" {
 		return fmt.Errorf("-t/--tag is required when building from a Dockerfile")
@@ -86,6 +146,8 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 	memory, _ := cmd.Flags().GetInt("build-memory")
 
 	disk, _ := cmd.Flags().GetInt("build-disk")
+	noCache, _ := cmd.Flags().GetBool("no-cache")
+	buildCacheSize, _ := cmd.Flags().GetInt("build-cache-size")
 
 	if cpus == 0 {
 		cpus = runtime.NumCPU()
@@ -155,6 +217,24 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 		guestDockerfileDir = "/workspace/dockerfile"
 	}
 
+	var extraDisks []api.DiskMount
+	if !noCache {
+		cachePath, err := ensureBuildCacheImage(buildCacheSize)
+		if err != nil {
+			return fmt.Errorf("prepare build cache: %w", err)
+		}
+		lockFile, err := lockBuildCache(cachePath)
+		if err != nil {
+			return fmt.Errorf("lock build cache: %w", err)
+		}
+		defer lockFile.Close()
+		extraDisks = append(extraDisks, api.DiskMount{
+			HostPath:   cachePath,
+			GuestMount: "/var/lib/buildkit",
+		})
+		fmt.Fprintf(os.Stderr, "Using build cache at %s\n", cachePath)
+	}
+
 	config := &api.Config{
 		Image:      buildkitImage,
 		Privileged: true,
@@ -164,7 +244,8 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 			DiskSizeMB:     disk,
 			TimeoutSeconds: 1800,
 		},
-		Network: &api.NetworkConfig{},
+		Network:    &api.NetworkConfig{},
+		ExtraDisks: extraDisks,
 		VFS: &api.VFSConfig{
 			Workspace: "/workspace",
 			Mounts:    mounts,

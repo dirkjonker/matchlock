@@ -65,6 +65,18 @@ if ! ip addr show eth0 2>/dev/null | grep -q "inet "; then
     sleep 2
 fi
 
+# Mount extra block devices from kernel cmdline (matchlock.disk.vdX=/mount/path)
+for param in $(cat /proc/cmdline); do
+    case "$param" in
+        matchlock.disk.*)
+            DEV=$(echo "$param" | sed 's/matchlock\.disk\.\(.*\)=.*/\1/')
+            MNTPATH=$(echo "$param" | cut -d= -f2)
+            mkdir -p "$MNTPATH"
+            mount -t ext4 "/dev/$DEV" "$MNTPATH" 2>/dev/null || true
+            ;;
+    esac
+done
+
 # Start FUSE daemon for VFS
 /opt/matchlock/guest-fused &
 
