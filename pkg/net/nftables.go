@@ -74,12 +74,6 @@ func (r *NFTablesRules) Setup() error {
 		Priority: nftables.ChainPriorityFilter,
 	})
 
-	ifaceIdx, err := getInterfaceIndex(r.tapInterface)
-	if err != nil {
-		return fmt.Errorf("failed to get interface index for %s: %w", r.tapInterface, err)
-	}
-	_ = ifaceIdx // validated interface exists; rules use interface name
-
 	conn.AddRule(&nftables.Rule{
 		Table: r.table,
 		Chain: preChain,
@@ -318,14 +312,6 @@ func (r *NFTablesRules) Cleanup() error {
 	}
 
 	return r.conn.Flush()
-}
-
-func getInterfaceIndex(name string) (uint32, error) {
-	iface, err := net.InterfaceByName(name)
-	if err != nil {
-		return 0, err
-	}
-	return uint32(iface.Index), nil
 }
 
 func ifname(n string) []byte {

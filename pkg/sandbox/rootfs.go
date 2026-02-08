@@ -49,6 +49,10 @@ hostname matchlock
 # Configure DNS from kernel cmdline (matchlock.dns=ip1,ip2,...)
 rm -f /etc/resolv.conf
 DNS_SERVERS=$(cat /proc/cmdline | tr ' ' '\n' | grep 'matchlock.dns=' | cut -d= -f2)
+if [ -z "$DNS_SERVERS" ]; then
+    echo "FATAL: matchlock.dns= not found in kernel cmdline" >&2
+    exit 1
+fi
 echo "$DNS_SERVERS" | tr ',' '\n' | while read -r ns; do
     [ -n "$ns" ] && echo "nameserver $ns"
 done > /etc/resolv.conf
