@@ -46,9 +46,12 @@ fi
 
 hostname matchlock
 
-# Configure DNS - remove any existing file/symlink and write fresh
+# Configure DNS from kernel cmdline (matchlock.dns=ip1,ip2,...)
 rm -f /etc/resolv.conf
-printf "nameserver 8.8.8.8\nnameserver 8.8.4.4\n" > /etc/resolv.conf
+DNS_SERVERS=$(cat /proc/cmdline | tr ' ' '\n' | grep 'matchlock.dns=' | cut -d= -f2)
+echo "$DNS_SERVERS" | tr ',' '\n' | while read -r ns; do
+    [ -n "$ns" ] && echo "nameserver $ns"
+done > /etc/resolv.conf
 
 # Network setup - bring up interface and get IP via DHCP
 ip link set eth0 up 2>/dev/null || ifconfig eth0 up 2>/dev/null

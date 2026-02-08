@@ -151,6 +151,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 		Privileged:      config.Privileged,
 		PrebuiltRootfs:  prebuiltRootfs,
 		ExtraDisks:      extraDisks,
+		DNSServers:      config.Network.GetDNSServers(),
 	}
 
 	machine, err := backend.Create(ctx, vmConfig)
@@ -195,13 +196,14 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 		}
 
 		netStack, err = sandboxnet.NewNetworkStack(&sandboxnet.Config{
-			File:      networkFile,
-			GatewayIP: subnetInfo.GatewayIP,
-			GuestIP:   subnetInfo.GuestIP,
-			MTU:       1500,
-			Policy:    policyEngine,
-			Events:    events,
-			CAPool:    caPool,
+			File:       networkFile,
+			GatewayIP:  subnetInfo.GatewayIP,
+			GuestIP:    subnetInfo.GuestIP,
+			MTU:        1500,
+			Policy:     policyEngine,
+			Events:     events,
+			CAPool:     caPool,
+			DNSServers: config.Network.GetDNSServers(),
 		})
 		if err != nil {
 			machine.Close()

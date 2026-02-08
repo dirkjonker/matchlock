@@ -120,6 +120,9 @@ matchlock run --image alpine:latest -it sh
 # With network allowlist
 matchlock run --image python:3.12-alpine --allow-host "api.openai.com" python agent.py
 
+# With custom DNS servers (default: 8.8.8.8, 8.8.4.4)
+matchlock run --image alpine:latest --dns-servers "1.1.1.1,1.0.0.1" cat /etc/resolv.conf
+
 # With secrets (MITM proxy replaces placeholder with real value)
 export ANTHROPIC_API_KEY=sk-xxx
 matchlock run --image python:3.12-alpine \

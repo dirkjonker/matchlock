@@ -3,6 +3,7 @@ package vm
 import (
 	"context"
 	"io"
+	"strings"
 
 	"github.com/jingkaihe/matchlock/pkg/api"
 )
@@ -34,6 +35,7 @@ type VMConfig struct {
 	Workspace       string // Guest VFS mount point (default: /workspace)
 	UseInterception bool   // Use network interception (MITM proxy)
 	Privileged      bool   // Skip in-guest security restrictions (seccomp, cap drop, no_new_privs)
+	DNSServers      []string // DNS servers for the guest (default: 8.8.8.8, 8.8.4.4)
 	PrebuiltRootfs  string // Pre-prepared rootfs path (skips internal copy if set)
 	ExtraDisks      []DiskConfig // Additional block devices to attach
 }
@@ -58,4 +60,23 @@ type Machine interface {
 type InteractiveMachine interface {
 	Machine
 	ExecInteractive(ctx context.Context, command string, opts *api.ExecOptions, rows, cols uint16, stdin io.Reader, stdout io.Writer, resizeCh <-chan [2]uint16) (int, error)
+}
+
+// KernelIPDNSSuffix returns the DNS portion of the kernel ip= parameter.
+// The ip= format only supports up to 2 DNS servers (`:dns0:dns1`).
+func KernelIPDNSSuffix(dnsServers []string) string {
+	var sb strings.Builder
+	for i, s := range dnsServers {
+		if i >= 2 {
+			break
+		}
+		sb.WriteByte(':')
+		sb.WriteString(s)
+	}
+	return sb.String()
+}
+
+// KernelDNSParam returns a comma-separated DNS list for the matchlock.dns= cmdline param.
+func KernelDNSParam(dnsServers []string) string {
+	return strings.Join(dnsServers, ",")
 }

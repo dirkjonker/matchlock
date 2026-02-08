@@ -248,7 +248,8 @@ func (m *LinuxMachine) generateFirecrackerConfig() []byte {
 		if workspace == "" {
 			workspace = "/workspace"
 		}
-		kernelArgs = fmt.Sprintf("console=ttyS0 reboot=k panic=1 acpi=off ip=%s::%s:255.255.255.0::eth0:off:8.8.8.8:8.8.4.4 matchlock.workspace=%s", guestIP, gatewayIP, workspace)
+		kernelArgs = fmt.Sprintf("console=ttyS0 reboot=k panic=1 acpi=off ip=%s::%s:255.255.255.0::eth0:off%s matchlock.workspace=%s matchlock.dns=%s",
+			guestIP, gatewayIP, vm.KernelIPDNSSuffix(m.config.DNSServers), workspace, vm.KernelDNSParam(m.config.DNSServers))
 		if m.config.Privileged {
 			kernelArgs += " matchlock.privileged=1"
 		}

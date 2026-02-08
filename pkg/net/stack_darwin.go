@@ -45,19 +45,22 @@ type NetworkStack struct {
 	interceptor *HTTPInterceptor
 	events      chan api.Event
 	linkEP      *socketPairEndpoint
+	dnsServers  []string
+	dnsIndex    atomic.Uint64
 	mu          sync.Mutex
 	closed      bool
 }
 
 type Config struct {
-	FD        int
-	File      *os.File // Use this instead of FD when available
-	GatewayIP string
-	GuestIP   string
-	MTU       uint32
-	Policy    *policy.Engine
-	Events    chan api.Event
-	CAPool    *CAPool
+	FD         int
+	File       *os.File // Use this instead of FD when available
+	GatewayIP  string
+	GuestIP    string
+	MTU        uint32
+	Policy     *policy.Engine
+	Events     chan api.Event
+	CAPool     *CAPool
+	DNSServers []string
 }
 
 // writeBufPool provides reusable buffers for serializing outbound packets
@@ -303,10 +306,11 @@ func NewNetworkStack(cfg *Config) (*NetworkStack, error) {
 	s.SetSpoofing(1, true)
 
 	ns := &NetworkStack{
-		stack:  s,
-		policy: cfg.Policy,
-		events: cfg.Events,
-		linkEP: linkEP,
+		stack:      s,
+		policy:     cfg.Policy,
+		events:     cfg.Events,
+		linkEP:     linkEP,
+		dnsServers: cfg.DNSServers,
 	}
 
 	ns.interceptor = NewHTTPInterceptor(cfg.Policy, cfg.Events, cfg.CAPool)
@@ -428,7 +432,12 @@ func (ns *NetworkStack) handleDNS(r *udp.ForwarderRequest) {
 		return
 	}
 
-	dnsConn, err := net.Dial("udp", "8.8.8.8:53")
+	if len(ns.dnsServers) == 0 {
+		return
+	}
+	idx := ns.dnsIndex.Add(1) - 1
+	server := ns.dnsServers[idx%uint64(len(ns.dnsServers))]
+	dnsConn, err := net.Dial("udp", server+":53")
 	if err != nil {
 		return
 	}

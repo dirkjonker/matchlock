@@ -24,17 +24,25 @@ type NFTablesRules struct {
 	httpPort        uint16
 	httpsPort       uint16
 	passthroughPort uint16
+	dnsServers      []net.IP
 	conn            *nftables.Conn
 	table           *nftables.Table
 }
 
-func NewNFTablesRules(tapInterface, gatewayIP string, httpPort, httpsPort, passthroughPort int) *NFTablesRules {
+func NewNFTablesRules(tapInterface, gatewayIP string, httpPort, httpsPort, passthroughPort int, dnsServers []string) *NFTablesRules {
+	var dnsIPs []net.IP
+	for _, s := range dnsServers {
+		if ip := net.ParseIP(s).To4(); ip != nil {
+			dnsIPs = append(dnsIPs, ip)
+		}
+	}
 	return &NFTablesRules{
 		tapInterface:    tapInterface,
 		gatewayIP:       net.ParseIP(gatewayIP).To4(),
 		httpPort:        uint16(httpPort),
 		httpsPort:       uint16(httpsPort),
 		passthroughPort: uint16(passthroughPort),
+		dnsServers:      dnsIPs,
 	}
 }
 
@@ -92,10 +100,10 @@ func (r *NFTablesRules) Setup() error {
 		})
 	}
 
-	// Allow DNS (UDP port 53) from the VM to known resolvers only.
+	// Allow DNS (UDP port 53) from the VM to configured resolvers only.
 	// Must come before the UDP drop rule. Restricting destination IPs
 	// prevents DNS tunneling to attacker-controlled nameservers.
-	for _, dnsIP := range []net.IP{net.ParseIP("8.8.8.8").To4(), net.ParseIP("8.8.4.4").To4()} {
+	for _, dnsIP := range r.dnsServers {
 		conn.AddRule(&nftables.Rule{
 			Table: r.table,
 			Chain: fwdChain,

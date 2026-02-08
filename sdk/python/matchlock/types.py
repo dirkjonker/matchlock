@@ -90,6 +90,9 @@ class CreateOptions:
     workspace: str = ""
     """Guest mount point for VFS (default: /workspace)."""
 
+    dns_servers: list[str] = field(default_factory=list)
+    """DNS servers to use (default: 8.8.8.8, 8.8.4.4)."""
+
 
 @dataclass
 class ExecResult:

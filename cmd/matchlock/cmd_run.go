@@ -64,6 +64,7 @@ func init() {
 	runCmd.Flags().StringSlice("allow-host", nil, "Allowed hosts (can be repeated)")
 	runCmd.Flags().StringSliceP("volume", "v", nil, "Volume mount (host:guest or host:guest:ro)")
 	runCmd.Flags().StringSlice("secret", nil, "Secret (NAME=VALUE@host1,host2 or NAME@host1,host2)")
+	runCmd.Flags().StringSlice("dns-servers", nil, "DNS servers (default: 8.8.8.8,8.8.4.4)")
 	runCmd.Flags().Int("cpus", api.DefaultCPUs, "Number of CPUs")
 	runCmd.Flags().Int("memory", api.DefaultMemoryMB, "Memory in MB")
 	runCmd.Flags().Int("timeout", api.DefaultTimeoutSeconds, "Timeout in seconds")
@@ -117,6 +118,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 	allowHosts, _ := cmd.Flags().GetStringSlice("allow-host")
 	volumes, _ := cmd.Flags().GetStringSlice("volume")
 	secrets, _ := cmd.Flags().GetStringSlice("secret")
+	dnsServers, _ := cmd.Flags().GetStringSlice("dns-servers")
 
 	command := api.ShellQuoteArgs(args)
 
@@ -193,6 +195,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 			AllowedHosts:    allowHosts,
 			BlockPrivateIPs: true,
 			Secrets:         parsedSecrets,
+			DNSServers:      dnsServers,
 		},
 		VFS: vfsConfig,
 	}

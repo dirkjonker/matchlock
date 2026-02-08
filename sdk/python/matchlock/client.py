@@ -277,7 +277,7 @@ class Client:
         if resources:
             params["resources"] = resources
 
-        if opts.allowed_hosts or opts.block_private_ips or opts.secrets:
+        if opts.allowed_hosts or opts.block_private_ips or opts.secrets or opts.dns_servers:
             network: dict[str, Any] = {
                 "allowed_hosts": opts.allowed_hosts,
                 "block_private_ips": opts.block_private_ips,
@@ -286,6 +286,8 @@ class Client:
                 network["secrets"] = {
                     s.name: {"value": s.value, "hosts": s.hosts} for s in opts.secrets
                 }
+            if opts.dns_servers:
+                network["dns_servers"] = opts.dns_servers
             params["network"] = network
 
         if opts.mounts or opts.workspace:

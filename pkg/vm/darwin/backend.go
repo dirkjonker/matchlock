@@ -183,8 +183,8 @@ func (b *DarwinBackend) buildKernelArgs(config *vm.VMConfig) string {
 			gatewayIP = "192.168.100.1"
 		}
 		return fmt.Sprintf(
-			"console=hvc0 root=/dev/vda rw init=/init reboot=k panic=1 ip=%s::%s:255.255.255.0::eth0:off:8.8.8.8:8.8.4.4 matchlock.workspace=%s%s%s",
-			guestIP, gatewayIP, workspace, privilegedArg, diskArgs,
+			"console=hvc0 root=/dev/vda rw init=/init reboot=k panic=1 ip=%s::%s:255.255.255.0::eth0:off%s matchlock.workspace=%s matchlock.dns=%s%s%s",
+			guestIP, gatewayIP, vm.KernelIPDNSSuffix(config.DNSServers), workspace, vm.KernelDNSParam(config.DNSServers), privilegedArg, diskArgs,
 		)
 	}
 

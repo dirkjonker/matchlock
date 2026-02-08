@@ -155,6 +155,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 		Workspace:  workspace,
 		Privileged: config.Privileged,
 		ExtraDisks: extraDisks,
+		DNSServers: config.Network.GetDNSServers(),
 	}
 
 	machine, err := backend.Create(ctx, vmConfig)
@@ -217,7 +218,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 
 		proxy.Start()
 
-		fwRules = sandboxnet.NewNFTablesRules(linuxMachine.TapName(), gatewayIP, httpPort, httpsPort, passthroughPort)
+		fwRules = sandboxnet.NewNFTablesRules(linuxMachine.TapName(), gatewayIP, httpPort, httpsPort, passthroughPort, config.Network.GetDNSServers())
 		if err := fwRules.Setup(); err != nil {
 			proxy.Close()
 			machine.Close()

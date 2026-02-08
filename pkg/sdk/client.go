@@ -174,6 +174,8 @@ type CreateOptions struct {
 	Secrets []Secret
 	// Workspace is the mount point for VFS in the guest (default: /workspace)
 	Workspace string
+	// DNSServers overrides the default DNS servers (8.8.8.8, 8.8.4.4)
+	DNSServers []string
 }
 
 // Secret defines a secret that will be injected as a placeholder env var
@@ -226,7 +228,7 @@ func (c *Client) Create(opts CreateOptions) (string, error) {
 		params["privileged"] = true
 	}
 
-	if len(opts.AllowedHosts) > 0 || opts.BlockPrivateIPs || len(opts.Secrets) > 0 {
+	if len(opts.AllowedHosts) > 0 || opts.BlockPrivateIPs || len(opts.Secrets) > 0 || len(opts.DNSServers) > 0 {
 		network := map[string]interface{}{
 			"allowed_hosts":     opts.AllowedHosts,
 			"block_private_ips": opts.BlockPrivateIPs,
@@ -240,6 +242,9 @@ func (c *Client) Create(opts CreateOptions) (string, error) {
 				}
 			}
 			network["secrets"] = secrets
+		}
+		if len(opts.DNSServers) > 0 {
+			network["dns_servers"] = opts.DNSServers
 		}
 		params["network"] = network
 	}
