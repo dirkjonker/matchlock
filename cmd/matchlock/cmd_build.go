@@ -95,22 +95,27 @@ func buildCachePath() (string, error) {
 }
 
 // ensureBuildCacheImage creates an ext4 image at cachePath if it doesn't already exist.
+// If the image exists but is smaller than sizeMB, it is grown in-place.
 // Must be called while holding the build cache lock.
 func ensureBuildCacheImage(cachePath string, sizeMB int) error {
 	if sizeMB <= 0 {
 		return fmt.Errorf("build-cache-size must be positive, got %d", sizeMB)
 	}
 
-	if _, err := os.Stat(cachePath); err == nil {
-		return nil
+	targetBytes := int64(sizeMB) * 1024 * 1024
+
+	if fi, err := os.Stat(cachePath); err == nil {
+		if fi.Size() >= targetBytes {
+			return nil
+		}
+		return growExt4Image(cachePath, targetBytes)
 	}
 
-	sizeBytes := int64(sizeMB) * 1024 * 1024
 	f, err := os.Create(cachePath)
 	if err != nil {
 		return fmt.Errorf("create cache image: %w", err)
 	}
-	if err := f.Truncate(sizeBytes); err != nil {
+	if err := f.Truncate(targetBytes); err != nil {
 		f.Close()
 		os.Remove(cachePath)
 		return fmt.Errorf("truncate cache image: %w", err)
@@ -121,6 +126,32 @@ func ensureBuildCacheImage(cachePath string, sizeMB int) error {
 	if out, err := mkfs.CombinedOutput(); err != nil {
 		os.Remove(cachePath)
 		return fmt.Errorf("mkfs.ext4: %w: %s", err, out)
+	}
+
+	return nil
+}
+
+// growExt4Image expands an existing ext4 image to targetBytes using truncate + resize2fs.
+func growExt4Image(path string, targetBytes int64) error {
+	fmt.Fprintf(os.Stderr, "Growing build cache to %d MB...\n", targetBytes/(1024*1024))
+
+	if err := os.Truncate(path, targetBytes); err != nil {
+		return fmt.Errorf("truncate cache image: %w", err)
+	}
+
+	if e2fsck, err := exec.LookPath("e2fsck"); err == nil {
+		cmd := exec.Command(e2fsck, "-fy", path)
+		cmd.CombinedOutput()
+	}
+
+	resize2fs, err := exec.LookPath("resize2fs")
+	if err != nil {
+		return fmt.Errorf("resize2fs not found; install e2fsprogs to grow cache")
+	}
+
+	cmd := exec.Command(resize2fs, "-f", path)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("resize2fs: %w: %s", err, out)
 	}
 
 	return nil
