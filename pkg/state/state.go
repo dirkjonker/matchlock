@@ -159,13 +159,18 @@ func (m *Manager) Kill(id string) error {
 }
 
 func (m *Manager) Remove(id string) error {
-	state, _ := m.Get(id)
+	state, err := m.Get(id)
+	if err != nil {
+		return err
+	}
 	if state.Status == "running" {
 		return fmt.Errorf("cannot remove running VM %s, kill it first", id)
 	}
 
 	return os.RemoveAll(filepath.Join(m.baseDir, id))
 }
+
+
 
 func (m *Manager) Prune() ([]string, error) {
 	states, err := m.List()
