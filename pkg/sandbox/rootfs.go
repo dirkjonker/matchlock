@@ -122,6 +122,15 @@ func prepareRootfs(rootfsPath string, diskSizeMB int64) error {
 		return fmt.Errorf("guest-fused not found at %s: %w", guestFusedPath, err)
 	}
 
+	// Resize BEFORE injecting components so that the filesystem has free space.
+	// Images built from large Dockerfiles (e.g. with Chromium) may have zero
+	// free blocks in the ext4 image created by createExt4.
+	if diskSizeMB > 0 {
+		if err := resizeRootfs(rootfsPath, diskSizeMB); err != nil {
+			return fmt.Errorf("resize rootfs: %w", err)
+		}
+	}
+
 	// Write init script to temp file for debugfs injection
 	initTmp, err := os.CreateTemp("", "matchlock-init-*")
 	if err != nil {
@@ -182,13 +191,6 @@ func prepareRootfs(rootfsPath string, diskSizeMB int64) error {
 	cmd.Stdin = strings.NewReader(cmdStr)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("debugfs inject components: %w: %s", err, output)
-	}
-
-	// Resize if requested
-	if diskSizeMB > 0 {
-		if err := resizeRootfs(rootfsPath, diskSizeMB); err != nil {
-			return fmt.Errorf("resize rootfs: %w", err)
-		}
 	}
 
 	return nil
