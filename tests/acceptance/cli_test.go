@@ -101,20 +101,27 @@ func TestCLIVersionFlag(t *testing.T) {
 // build
 // ---------------------------------------------------------------------------
 
-func TestCLIBuild(t *testing.T) {
-	stdout, _, exitCode := runCLIWithTimeout(t, 5*time.Minute, "build", "alpine:latest")
+func TestCLIPull(t *testing.T) {
+	stdout, _, exitCode := runCLIWithTimeout(t, 5*time.Minute, "pull", "alpine:latest")
 	if exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0; stdout: %s", exitCode, stdout)
 	}
-	if !strings.Contains(stdout, "Built:") && !strings.Contains(stdout, "rootfs") {
-		t.Errorf("expected build output, got: %s", stdout)
+	if !strings.Contains(stdout, "Digest:") {
+		t.Errorf("expected pull output with Digest, got: %s", stdout)
 	}
 }
 
-func TestCLIBuildMissingImage(t *testing.T) {
-	_, _, exitCode := runCLI(t, "build")
+func TestCLIPullMissingImage(t *testing.T) {
+	_, _, exitCode := runCLI(t, "pull")
 	if exitCode == 0 {
 		t.Errorf("expected non-zero exit code for missing image arg")
+	}
+}
+
+func TestCLIBuildMissingContext(t *testing.T) {
+	_, _, exitCode := runCLI(t, "build")
+	if exitCode == 0 {
+		t.Errorf("expected non-zero exit code for missing context arg")
 	}
 }
 
@@ -479,7 +486,7 @@ func TestCLIHelp(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("--help exit code = %d", exitCode)
 	}
-	for _, sub := range []string{"run", "exec", "build", "list", "get", "kill", "rm", "prune", "rpc", "version"} {
+	for _, sub := range []string{"run", "exec", "build", "pull", "list", "get", "kill", "rm", "prune", "rpc", "version"} {
 		if !strings.Contains(stdout, sub) {
 			t.Errorf("help output should mention %q subcommand", sub)
 		}

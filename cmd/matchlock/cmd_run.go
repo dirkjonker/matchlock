@@ -237,6 +237,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 			c, cancel := closeCtx()
 			sb.Close(c)
 			cancel()
+			stateMgr.Remove(sb.ID())
 		}
 		os.Exit(exitCode)
 	}
@@ -252,6 +253,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 				c, cancel := closeCtx()
 				sb.Close(c)
 				cancel()
+				stateMgr.Remove(sb.ID())
 			}
 			return fmt.Errorf("executing command: %w", err)
 		}
@@ -263,6 +265,7 @@ func runRun(cmd *cobra.Command, args []string) error {
 			c, cancel := closeCtx()
 			sb.Close(c)
 			cancel()
+			stateMgr.Remove(sb.ID())
 			os.Exit(result.ExitCode)
 		}
 	}
