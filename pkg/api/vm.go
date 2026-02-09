@@ -12,6 +12,7 @@ type ExecOptions struct {
 	Stdin      io.Reader
 	Stdout     io.Writer
 	Stderr     io.Writer
+	User       string // "uid", "uid:gid", or username — resolved in guest
 }
 
 type ExecResult struct {

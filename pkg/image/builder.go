@@ -46,6 +46,7 @@ type BuildResult struct {
 	Digest     string
 	Size       int64
 	Cached     bool
+	OCI        *OCIConfig
 }
 
 func (b *Builder) Build(ctx context.Context, imageRef string) (*BuildResult, error) {
@@ -67,12 +68,19 @@ func (b *Builder) Build(ctx context.Context, imageRef string) (*BuildResult, err
 				if filepath.Ext(e.Name()) == ".ext4" {
 					rootfsPath := filepath.Join(cacheDir, e.Name())
 					fi, _ := os.Stat(rootfsPath)
-					return &BuildResult{
+					result := &BuildResult{
 						RootfsPath: rootfsPath,
 						Digest:     strings.TrimSuffix(e.Name(), ".ext4"),
 						Size:       fi.Size(),
 						Cached:     true,
-					}, nil
+					}
+					if metaBytes, err := os.ReadFile(filepath.Join(cacheDir, "metadata.json")); err == nil {
+						var meta ImageMeta
+						if json.Unmarshal(metaBytes, &meta) == nil {
+							result.OCI = meta.OCI
+						}
+					}
+					return result, nil
 				}
 			}
 		}
@@ -115,6 +123,8 @@ func (b *Builder) Build(ctx context.Context, imageRef string) (*BuildResult, err
 		return nil, fmt.Errorf("create ext4: %w", err)
 	}
 
+	ociConfig := extractOCIConfig(img)
+
 	fi, _ := os.Stat(rootfsPath)
 
 	meta := ImageMeta{
@@ -123,6 +133,7 @@ func (b *Builder) Build(ctx context.Context, imageRef string) (*BuildResult, err
 		Size:      fi.Size(),
 		CreatedAt: time.Now(),
 		Source:    "registry",
+		OCI:      ociConfig,
 	}
 	if metaBytes, err := json.MarshalIndent(meta, "", "  "); err == nil {
 		os.WriteFile(filepath.Join(cacheDir, "metadata.json"), metaBytes, 0644)
@@ -132,6 +143,7 @@ func (b *Builder) Build(ctx context.Context, imageRef string) (*BuildResult, err
 		RootfsPath: rootfsPath,
 		Digest:     digest.String(),
 		Size:       fi.Size(),
+		OCI:        ociConfig,
 	}, nil
 }
 
@@ -160,6 +172,32 @@ func (b *Builder) SaveTag(tag string, result *BuildResult) error {
 
 func (b *Builder) Store() *Store {
 	return b.store
+}
+
+func extractOCIConfig(img v1.Image) *OCIConfig {
+	cf, err := img.ConfigFile()
+	if err != nil || cf == nil {
+		return nil
+	}
+	c := cf.Config
+
+	oci := &OCIConfig{
+		User:       c.User,
+		WorkingDir: c.WorkingDir,
+		Entrypoint: c.Entrypoint,
+		Cmd:        c.Cmd,
+	}
+
+	if len(c.Env) > 0 {
+		oci.Env = make(map[string]string, len(c.Env))
+		for _, e := range c.Env {
+			if k, v, ok := strings.Cut(e, "="); ok {
+				oci.Env[k] = v
+			}
+		}
+	}
+
+	return oci
 }
 
 func sanitizeRef(ref string) string {

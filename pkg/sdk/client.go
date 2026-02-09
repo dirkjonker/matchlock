@@ -194,6 +194,17 @@ type CreateOptions struct {
 	Workspace string
 	// DNSServers overrides the default DNS servers (8.8.8.8, 8.8.4.4)
 	DNSServers []string
+	// ImageConfig holds OCI image metadata (USER, ENTRYPOINT, CMD, WORKDIR, ENV)
+	ImageConfig *ImageConfig
+}
+
+// ImageConfig holds OCI image metadata for user/entrypoint/cmd/workdir/env.
+type ImageConfig struct {
+	User       string            `json:"user,omitempty"`
+	WorkingDir string            `json:"working_dir,omitempty"`
+	Entrypoint []string          `json:"entrypoint,omitempty"`
+	Cmd        []string          `json:"cmd,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
 }
 
 // Secret defines a secret that will be injected as a placeholder env var
@@ -276,6 +287,10 @@ func (c *Client) Create(opts CreateOptions) (string, error) {
 			vfs["workspace"] = opts.Workspace
 		}
 		params["vfs"] = vfs
+	}
+
+	if opts.ImageConfig != nil {
+		params["image_config"] = opts.ImageConfig
 	}
 
 	result, err := c.sendRequest("create", params)

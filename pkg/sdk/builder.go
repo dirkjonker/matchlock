@@ -118,6 +118,30 @@ func (b *SandboxBuilder) MountOverlay(guestPath, hostPath string) *SandboxBuilde
 	return b.Mount(guestPath, MountConfig{Type: "overlay", HostPath: hostPath})
 }
 
+// WithUser sets the user to run commands as (uid, uid:gid, or username).
+func (b *SandboxBuilder) WithUser(user string) *SandboxBuilder {
+	if b.opts.ImageConfig == nil {
+		b.opts.ImageConfig = &ImageConfig{}
+	}
+	b.opts.ImageConfig.User = user
+	return b
+}
+
+// WithEntrypoint sets the image entrypoint override.
+func (b *SandboxBuilder) WithEntrypoint(entrypoint ...string) *SandboxBuilder {
+	if b.opts.ImageConfig == nil {
+		b.opts.ImageConfig = &ImageConfig{}
+	}
+	b.opts.ImageConfig.Entrypoint = entrypoint
+	return b
+}
+
+// WithImageConfig sets the full image configuration.
+func (b *SandboxBuilder) WithImageConfig(cfg *ImageConfig) *SandboxBuilder {
+	b.opts.ImageConfig = cfg
+	return b
+}
+
 // Options returns the underlying CreateOptions. Useful when you need to pass
 // the options to Client.Create directly.
 func (b *SandboxBuilder) Options() CreateOptions {

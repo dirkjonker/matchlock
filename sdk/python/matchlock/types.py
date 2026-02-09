@@ -57,6 +57,40 @@ class Secret:
 
 
 @dataclass
+class ImageConfig:
+    """OCI image metadata for user/entrypoint/cmd/workdir/env."""
+
+    user: str = ""
+    """Run as user (uid, uid:gid, or username)."""
+
+    working_dir: str = ""
+    """Working directory from the image."""
+
+    entrypoint: list[str] = field(default_factory=list)
+    """Image entrypoint."""
+
+    cmd: list[str] = field(default_factory=list)
+    """Image default command."""
+
+    env: dict[str, str] = field(default_factory=dict)
+    """Environment variables from the image."""
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {}
+        if self.user:
+            d["user"] = self.user
+        if self.working_dir:
+            d["working_dir"] = self.working_dir
+        if self.entrypoint:
+            d["entrypoint"] = self.entrypoint
+        if self.cmd:
+            d["cmd"] = self.cmd
+        if self.env:
+            d["env"] = self.env
+        return d
+
+
+@dataclass
 class CreateOptions:
     """Options for creating a sandbox."""
 
@@ -92,6 +126,9 @@ class CreateOptions:
 
     dns_servers: list[str] = field(default_factory=list)
     """DNS servers to use (default: 8.8.8.8, 8.8.4.4)."""
+
+    image_config: ImageConfig | None = None
+    """OCI image metadata (USER, ENTRYPOINT, CMD, WORKDIR, ENV)."""
 
 
 @dataclass

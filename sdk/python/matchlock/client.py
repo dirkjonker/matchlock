@@ -323,6 +323,9 @@ class Client:
                 vfs["workspace"] = opts.workspace
             params["vfs"] = vfs
 
+        if opts.image_config is not None:
+            params["image_config"] = opts.image_config.to_dict()
+
         result = self._send_request("create", params)
         self._vm_id = result["id"]
         return self._vm_id

@@ -3,10 +3,12 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -214,10 +216,32 @@ func runSandboxLauncher() {
 
 	argv := append([]string{command}, args...)
 
+	// Switch user if requested via MATCHLOCK_USER env var
+	userSpec := os.Getenv("MATCHLOCK_USER")
+	os.Unsetenv("MATCHLOCK_USER")
+	if userSpec != "" {
+		uid, gid, homeDir, err := resolveUser(userSpec)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "matchlock: resolve user %q: %v\n", userSpec, err)
+			os.Exit(127)
+		}
+		if err := syscall.Setgid(gid); err != nil {
+			fmt.Fprintf(os.Stderr, "matchlock: setgid(%d): %v\n", gid, err)
+			os.Exit(127)
+		}
+		if err := syscall.Setuid(uid); err != nil {
+			fmt.Fprintf(os.Stderr, "matchlock: setuid(%d): %v\n", uid, err)
+			os.Exit(127)
+		}
+		if homeDir != "" {
+			os.Setenv("HOME", homeDir)
+		}
+	}
+
 	// Filter out our internal env vars from the environment
 	var env []string
 	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "MATCHLOCK_CMD=") || strings.HasPrefix(e, "MATCHLOCK_ARG_") || strings.HasPrefix(e, sandboxLauncherEnvKey+"=") {
+		if strings.HasPrefix(e, "MATCHLOCK_CMD=") || strings.HasPrefix(e, "MATCHLOCK_ARG_") || strings.HasPrefix(e, sandboxLauncherEnvKey+"=") || strings.HasPrefix(e, "MATCHLOCK_USER=") {
 			continue
 		}
 		env = append(env, e)
@@ -267,6 +291,124 @@ func wrapCommandForSandbox(cmd *exec.Cmd) {
 			cmd.Env = append(cmd.Env, fmt.Sprintf("MATCHLOCK_ARG_%d=%s", i, arg))
 		}
 	}
+}
+
+// resolveUser resolves a user spec ("uid", "uid:gid", or "username") to numeric
+// UID, GID, and home directory by parsing /etc/passwd and /etc/group.
+func resolveUser(spec string) (uid, gid int, homeDir string, err error) {
+	// Handle "uid:gid" format
+	if parts := strings.SplitN(spec, ":", 2); len(parts) == 2 {
+		uid, err = resolveUID(parts[0])
+		if err != nil {
+			return 0, 0, "", fmt.Errorf("resolve uid %q: %w", parts[0], err)
+		}
+		gid, err = resolveGID(parts[1])
+		if err != nil {
+			return 0, 0, "", fmt.Errorf("resolve gid %q: %w", parts[1], err)
+		}
+		_, _, homeDir = lookupPasswdByUID(uid)
+		return uid, gid, homeDir, nil
+	}
+
+	// Try numeric UID
+	if n, err := strconv.Atoi(spec); err == nil {
+		gid, _, homeDir = lookupPasswdByUID(n)
+		return n, gid, homeDir, nil
+	}
+
+	// Lookup by username in /etc/passwd
+	uid, gid, homeDir, ok := lookupPasswdByName(spec)
+	if !ok {
+		return 0, 0, "", fmt.Errorf("user %q not found in /etc/passwd", spec)
+	}
+	return uid, gid, homeDir, nil
+}
+
+func resolveUID(s string) (int, error) {
+	if n, err := strconv.Atoi(s); err == nil {
+		return n, nil
+	}
+	uid, _, _, ok := lookupPasswdByName(s)
+	if !ok {
+		return 0, fmt.Errorf("user %q not found", s)
+	}
+	return uid, nil
+}
+
+func resolveGID(s string) (int, error) {
+	if n, err := strconv.Atoi(s); err == nil {
+		return n, nil
+	}
+	// Lookup group name in /etc/group
+	f, err := os.Open("/etc/group")
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "#") || line == "" {
+			continue
+		}
+		// group_name:password:GID:user_list
+		fields := strings.SplitN(line, ":", 4)
+		if len(fields) >= 3 && fields[0] == s {
+			gid, err := strconv.Atoi(fields[2])
+			if err == nil {
+				return gid, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("group %q not found", s)
+}
+
+// lookupPasswdByName returns uid, gid, homeDir, ok for a username from /etc/passwd.
+func lookupPasswdByName(name string) (int, int, string, bool) {
+	f, err := os.Open("/etc/passwd")
+	if err != nil {
+		return 0, 0, "", false
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "#") || line == "" {
+			continue
+		}
+		// name:password:uid:gid:gecos:home:shell
+		fields := strings.SplitN(line, ":", 7)
+		if len(fields) >= 6 && fields[0] == name {
+			uid, _ := strconv.Atoi(fields[2])
+			gid, _ := strconv.Atoi(fields[3])
+			return uid, gid, fields[5], true
+		}
+	}
+	return 0, 0, "", false
+}
+
+// lookupPasswdByUID returns gid, shell, homeDir for a UID from /etc/passwd.
+func lookupPasswdByUID(uid int) (gid int, shell string, homeDir string) {
+	f, err := os.Open("/etc/passwd")
+	if err != nil {
+		return 0, "", ""
+	}
+	defer f.Close()
+	uidStr := strconv.Itoa(uid)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		fields := strings.SplitN(line, ":", 7)
+		if len(fields) >= 6 && fields[2] == uidStr {
+			gid, _ := strconv.Atoi(fields[3])
+			shell := ""
+			if len(fields) >= 7 {
+				shell = fields[6]
+			}
+			return gid, shell, fields[5]
+		}
+	}
+	return 0, "", ""
 }
 
 // wipeBytes zeros out a byte slice to remove sensitive data from memory.

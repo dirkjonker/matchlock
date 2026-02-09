@@ -178,6 +178,7 @@ func (m *DarwinMachine) Exec(ctx context.Context, command string, opts *api.Exec
 	if opts != nil {
 		req.WorkingDir = opts.WorkingDir
 		req.Env = opts.Env
+		req.User = opts.User
 	}
 
 	reqData, err := json.Marshal(req)
@@ -293,6 +294,7 @@ func (m *DarwinMachine) ExecInteractive(ctx context.Context, command string, opt
 	if opts != nil {
 		req.WorkingDir = opts.WorkingDir
 		req.Env = opts.Env
+		req.User = opts.User
 	}
 
 	reqData, err := json.Marshal(req)

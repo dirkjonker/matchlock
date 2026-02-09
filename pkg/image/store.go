@@ -11,12 +11,21 @@ import (
 	"time"
 )
 
+type OCIConfig struct {
+	User       string            `json:"user,omitempty"`
+	WorkingDir string            `json:"working_dir,omitempty"`
+	Entrypoint []string          `json:"entrypoint,omitempty"`
+	Cmd        []string          `json:"cmd,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
+}
+
 type ImageMeta struct {
-	Tag       string    `json:"tag"`
-	Digest    string    `json:"digest,omitempty"`
-	Size      int64     `json:"size"`
-	CreatedAt time.Time `json:"created_at"`
-	Source    string    `json:"source,omitempty"`
+	Tag       string     `json:"tag"`
+	Digest    string     `json:"digest,omitempty"`
+	Size      int64      `json:"size"`
+	CreatedAt time.Time  `json:"created_at"`
+	Source    string     `json:"source,omitempty"`
+	OCI      *OCIConfig `json:"oci,omitempty"`
 }
 
 type ImageInfo struct {
@@ -113,6 +122,7 @@ func (s *Store) Get(tag string) (*BuildResult, error) {
 		Digest:     meta.Digest,
 		Size:       fi.Size(),
 		Cached:     true,
+		OCI:        meta.OCI,
 	}, nil
 }
 

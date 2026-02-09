@@ -57,6 +57,7 @@ type ExecRequest struct {
 	WorkingDir string            `json:"working_dir"`
 	Env        map[string]string `json:"env"`
 	Stdin      []byte            `json:"stdin"`
+	User       string            `json:"user,omitempty"`
 }
 
 type ExecTTYRequest struct {
@@ -66,6 +67,7 @@ type ExecTTYRequest struct {
 	Env        map[string]string `json:"env"`
 	Rows       uint16            `json:"rows"`
 	Cols       uint16            `json:"cols"`
+	User       string            `json:"user,omitempty"`
 }
 
 type ExecResponse struct {
@@ -201,6 +203,13 @@ func handleExecBatch(fd int, data []byte) {
 		cmd.Env = env
 	}
 
+	if req.User != "" {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		cmd.Env = append(cmd.Env, "MATCHLOCK_USER="+req.User)
+	}
+
 	// Apply sandbox isolation: PID namespace + seccomp + cap drop via re-exec
 	applySandboxSysProcAttr(cmd)
 	wrapCommandForSandbox(cmd)
@@ -261,6 +270,13 @@ func handleExecStreamBatch(fd int, data []byte) {
 			env = append(env, fmt.Sprintf("%s=%s", k, v))
 		}
 		cmd.Env = env
+	}
+
+	if req.User != "" {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		cmd.Env = append(cmd.Env, "MATCHLOCK_USER="+req.User)
 	}
 
 	applySandboxSysProcAttr(cmd)
@@ -342,6 +358,13 @@ func handleExecTTY(fd int, data []byte) {
 			env = append(env, fmt.Sprintf("%s=%s", k, v))
 		}
 		cmd.Env = env
+	}
+
+	if req.User != "" {
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		cmd.Env = append(cmd.Env, "MATCHLOCK_USER="+req.User)
 	}
 
 	// Apply sandbox isolation: PID namespace + seccomp + cap drop via re-exec
