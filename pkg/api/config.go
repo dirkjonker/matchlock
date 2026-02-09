@@ -11,11 +11,11 @@ import (
 const DefaultWorkspace = "/workspace"
 
 const (
-	DefaultCPUs                     = 1
-	DefaultMemoryMB                 = 512
-	DefaultDiskSizeMB               = 5120
-	DefaultTimeoutSeconds           = 300
-	DefaultGracefulShutdownPeriod   = 500 * time.Millisecond
+	DefaultCPUs                   = 1
+	DefaultMemoryMB               = 512
+	DefaultDiskSizeMB             = 5120
+	DefaultTimeoutSeconds         = 300
+	DefaultGracefulShutdownPeriod = 0
 )
 
 type Config struct {
