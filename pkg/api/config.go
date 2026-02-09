@@ -18,6 +18,14 @@ const (
 	DefaultGracefulShutdownPeriod = 0
 )
 
+type ImageConfig struct {
+	User       string            `json:"user,omitempty"`
+	WorkingDir string            `json:"working_dir,omitempty"`
+	Entrypoint []string          `json:"entrypoint,omitempty"`
+	Cmd        []string          `json:"cmd,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
+}
+
 type Config struct {
 	Image      string            `json:"image,omitempty"`
 	Privileged bool              `json:"privileged,omitempty"`
@@ -26,6 +34,7 @@ type Config struct {
 	VFS        *VFSConfig        `json:"vfs,omitempty"`
 	Env        map[string]string `json:"env,omitempty"`
 	ExtraDisks []DiskMount       `json:"extra_disks,omitempty"`
+	ImageCfg   *ImageConfig      `json:"image_config,omitempty"`
 }
 
 // DiskMount describes a persistent ext4 disk image to attach as a block device.
@@ -174,7 +183,28 @@ func (c *Config) Merge(other *Config) *Config {
 	if len(other.ExtraDisks) > 0 {
 		result.ExtraDisks = other.ExtraDisks
 	}
+	if other.ImageCfg != nil {
+		result.ImageCfg = other.ImageCfg
+	}
 	return &result
+}
+
+// ComposeCommand builds a shell command from image ENTRYPOINT/CMD and user-provided args.
+// Follows Docker semantics: if user provides args, they replace CMD; ENTRYPOINT is always prepended.
+func (ic *ImageConfig) ComposeCommand(userArgs []string) []string {
+	if ic == nil {
+		return userArgs
+	}
+	result := make([]string, len(ic.Entrypoint))
+	copy(result, ic.Entrypoint)
+	if len(userArgs) > 0 {
+		return append(result, userArgs...)
+	}
+	result = append(result, ic.Cmd...)
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func ParseConfig(data []byte) (*Config, error) {

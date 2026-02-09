@@ -54,9 +54,12 @@ func (b *Builder) Import(ctx context.Context, reader io.Reader, tag string) (*Bu
 		return nil, fmt.Errorf("create ext4: %w", err)
 	}
 
+	ociConfig := extractOCIConfig(img)
+
 	meta := ImageMeta{
 		Digest: digest.String(),
 		Source: "import",
+		OCI:   ociConfig,
 	}
 	if err := b.store.Save(tag, rootfsPath, meta); err != nil {
 		os.Remove(rootfsPath)

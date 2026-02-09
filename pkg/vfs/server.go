@@ -30,6 +30,10 @@ const (
 	OpReaddir
 	OpFsync
 	OpMkdirAll
+	OpTruncate
+	OpSymlink
+	OpReadlink
+	OpLink
 )
 
 type VFSRequest struct {
@@ -128,6 +132,16 @@ func (s *VFSServer) HandleConnection(conn net.Conn) {
 func (s *VFSServer) dispatch(req *VFSRequest) *VFSResponse {
 	switch req.Op {
 	case OpLookup, OpGetattr:
+		info, err := s.provider.Stat(req.Path)
+		if err != nil {
+			return &VFSResponse{Err: errnoFromError(err)}
+		}
+		return &VFSResponse{Stat: statFromInfo(info)}
+
+	case OpSetattr:
+		if err := s.provider.Chmod(req.Path, os.FileMode(req.Mode)); err != nil {
+			return &VFSResponse{Err: errnoFromError(err)}
+		}
 		info, err := s.provider.Stat(req.Path)
 		if err != nil {
 			return &VFSResponse{Err: errnoFromError(err)}

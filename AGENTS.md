@@ -55,6 +55,8 @@ matchlock/
 
 This project uses [mise](https://mise.jdx.dev/) for task management and dev dependencies. Run `mise tasks` to list all available tasks.
 
+> **Important:** Always use `mise run build` to compile binaries rather than `go build` directly. On macOS it handles codesigning (required for Virtualization.framework entitlements). On Linux it cross-compiles the guest binaries for the correct architecture.
+
 ```bash
 mise install         # Install dev dependencies (Go, golangci-lint, crane)
 mise run build       # Build CLI (codesigned on macOS) + guest binaries
@@ -70,9 +72,8 @@ mise run setup:darwin   # Build + codesign CLI + guest binaries
 
 **Linux:**
 ```bash
-mise run setup          # Full setup (firecracker + images + install)
-# Or step by step:
-sudo ./bin/matchlock setup linux   # Configure Firecracker, KVM, capabilities, nftables
+mise run build && sudo ./bin/matchlock setup linux   # Build + configure Firecracker, KVM, capabilities, nftables
+mise run setup                                       # Or: full setup (firecracker + images + install)
 ```
 
 **Kernels** are auto-downloaded from GHCR on first run. Override with `MATCHLOCK_KERNEL=/path/to/kernel`.
@@ -145,6 +146,16 @@ matchlock build -t myapp:latest .
 matchlock build -t myapp:latest ./myapp
 matchlock build -f Dockerfile.dev -t myapp:latest .
 
+# Run as specific user (overrides image USER)
+matchlock run --image python:3.12-alpine -u nobody python3 -c 'import os; print(os.getuid())'
+matchlock run --image python:3.12-alpine -u 1000:1000 id
+
+# Override entrypoint
+matchlock run --image python:3.12-alpine --entrypoint python3 -- -c 'print(42)'
+
+# Use image ENTRYPOINT+CMD (no command needed if image defines them)
+matchlock run --image nginx:latest
+
 # Privileged mode (skips in-guest seccomp/cap restrictions)
 matchlock run --privileged --image moby/buildkit:rootless -it sh
 
@@ -173,6 +184,7 @@ matchlock rpc
 - Runs inside VM to handle exec requests
 - Ready signal service on vsock port 5002
 - Command execution service on vsock port 5000
+- Supports running commands as non-root users via `MATCHLOCK_USER` env var (resolves username/uid:gid from /etc/passwd, calls setuid/setgid before exec)
 
 ### Guest FUSE Daemon (`cmd/guest-fused`)
 - Mounts VFS from host via vsock at configurable workspace (default: /workspace)
@@ -183,9 +195,10 @@ matchlock rpc
 ### Image Builder (`pkg/image`)
 - Pulls OCI/Docker images from any registry (Docker Hub, GHCR, etc.)
 - Extracts image layers and converts to ext4 rootfs
+- **Extracts OCI image config** (USER, ENTRYPOINT, CMD, WORKDIR, ENV) from `v1.Image.ConfigFile()` and persists as `OCIConfig` in `metadata.json`
 - Injects matchlock guest components (guest-agent, guest-fused)
 - Creates minimal init script that runs as PID 1
-- Caches built images by digest in `~/.cache/matchlock/images/` with `metadata.json` (original tag, digest, size, timestamp, source)
+- Caches built images by digest in `~/.cache/matchlock/images/` with `metadata.json` (original tag, digest, size, timestamp, source, oci config)
 - Supports any Linux container image (Alpine, Ubuntu, Debian, etc.)
 - **Local store** (`~/.cache/matchlock/images/local/`): Stores locally-built/imported images with `rootfs.ext4` + `metadata.json` per tag
 - **Import** (`Builder.Import`): Reads Docker/OCI tarballs (`docker save` format) via `go-containerregistry`, extracts layers, creates ext4 rootfs, saves to local store

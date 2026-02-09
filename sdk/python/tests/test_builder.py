@@ -1,7 +1,7 @@
 """Tests for matchlock.builder (Sandbox)."""
 
 from matchlock.builder import Sandbox
-from matchlock.types import CreateOptions, MountConfig, Secret
+from matchlock.types import CreateOptions, ImageConfig, MountConfig, Secret
 
 
 class TestSandboxInit:
@@ -183,6 +183,39 @@ class TestSandboxMounts:
         assert "/a" in opts.mounts
         assert "/b" in opts.mounts
         assert "/c" in opts.mounts
+
+
+class TestSandboxImageConfig:
+    def test_with_user_then_image_config_preserves_user(self):
+        opts = (
+            Sandbox("img")
+            .with_user("nobody")
+            .with_image_config(ImageConfig(working_dir="/tmp"))
+            .options()
+        )
+        assert opts.image_config is not None
+        assert opts.image_config.user == "nobody"
+        assert opts.image_config.working_dir == "/tmp"
+
+    def test_with_image_config_then_user_overrides(self):
+        opts = (
+            Sandbox("img")
+            .with_image_config(ImageConfig(working_dir="/tmp", user="root"))
+            .with_user("nobody")
+            .options()
+        )
+        assert opts.image_config.user == "nobody"
+        assert opts.image_config.working_dir == "/tmp"
+
+    def test_with_image_config_merges_fields(self):
+        opts = (
+            Sandbox("img")
+            .with_entrypoint("python3")
+            .with_image_config(ImageConfig(cmd=["app.py"]))
+            .options()
+        )
+        assert opts.image_config.entrypoint == ["python3"]
+        assert opts.image_config.cmd == ["app.py"]
 
 
 class TestSandboxIndependence:

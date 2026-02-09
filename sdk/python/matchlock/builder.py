@@ -10,7 +10,7 @@ Usage:
 
 from __future__ import annotations
 
-from .types import CreateOptions, MountConfig, Secret
+from .types import CreateOptions, ImageConfig, MountConfig, Secret
 
 
 class Sandbox:
@@ -72,6 +72,39 @@ class Sandbox:
 
     def mount_overlay(self, guest_path: str, host_path: str) -> Sandbox:
         return self.mount(guest_path, MountConfig(type="overlay", host_path=host_path))
+
+    def with_user(self, user: str) -> Sandbox:
+        """Set the user to run commands as (uid, uid:gid, or username)."""
+        if self._opts.image_config is None:
+            self._opts.image_config = ImageConfig()
+        self._opts.image_config.user = user
+        return self
+
+    def with_entrypoint(self, *entrypoint: str) -> Sandbox:
+        """Override the image entrypoint."""
+        if self._opts.image_config is None:
+            self._opts.image_config = ImageConfig()
+        self._opts.image_config.entrypoint = list(entrypoint)
+        return self
+
+    def with_image_config(self, config: ImageConfig) -> Sandbox:
+        """Merge the given image configuration into any existing config.
+
+        Fields set in *config* override existing values; falsy fields are left unchanged.
+        """
+        if self._opts.image_config is None:
+            self._opts.image_config = ImageConfig()
+        if config.user:
+            self._opts.image_config.user = config.user
+        if config.working_dir:
+            self._opts.image_config.working_dir = config.working_dir
+        if config.entrypoint:
+            self._opts.image_config.entrypoint = config.entrypoint
+        if config.cmd:
+            self._opts.image_config.cmd = config.cmd
+        if config.env:
+            self._opts.image_config.env = config.env
+        return self
 
     def options(self) -> CreateOptions:
         return self._opts

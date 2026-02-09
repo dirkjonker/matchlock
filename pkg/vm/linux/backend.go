@@ -395,6 +395,7 @@ func (m *LinuxMachine) execVsock(ctx context.Context, command string, opts *api.
 	if opts != nil {
 		req.WorkingDir = opts.WorkingDir
 		req.Env = opts.Env
+		req.User = opts.User
 	}
 
 	reqData, err := json.Marshal(req)
@@ -516,6 +517,7 @@ func (m *LinuxMachine) ExecInteractive(ctx context.Context, command string, opts
 	if opts != nil {
 		req.WorkingDir = opts.WorkingDir
 		req.Env = opts.Env
+		req.User = opts.User
 	}
 
 	reqData, err := json.Marshal(req)

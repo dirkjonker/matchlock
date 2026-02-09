@@ -12,9 +12,10 @@ import (
 )
 
 type MemoryProvider struct {
-	mu    sync.RWMutex
-	files map[string]*memFile
-	dirs  map[string]bool
+	mu       sync.RWMutex
+	files    map[string]*memFile
+	dirs     map[string]bool
+	dirModes map[string]os.FileMode
 }
 
 type memFile struct {
@@ -26,8 +27,9 @@ type memFile struct {
 
 func NewMemoryProvider() *MemoryProvider {
 	return &MemoryProvider{
-		files: make(map[string]*memFile),
-		dirs:  map[string]bool{"/": true},
+		files:    make(map[string]*memFile),
+		dirs:     map[string]bool{"/": true},
+		dirModes: map[string]os.FileMode{"/": 0755},
 	}
 }
 
@@ -47,7 +49,11 @@ func (p *MemoryProvider) Stat(path string) (FileInfo, error) {
 	defer p.mu.RUnlock()
 
 	if p.dirs[path] {
-		return NewFileInfo(filepath.Base(path), 0, os.ModeDir|0755, time.Now(), true), nil
+		mode := p.dirModes[path]
+		if mode == 0 {
+			mode = 0755
+		}
+		return NewFileInfo(filepath.Base(path), 0, os.ModeDir|mode, time.Now(), true), nil
 	}
 
 	f, ok := p.files[path]
@@ -169,6 +175,28 @@ func (p *MemoryProvider) Mkdir(path string, mode os.FileMode) error {
 	}
 
 	p.dirs[path] = true
+	p.dirModes[path] = mode
+	return nil
+}
+
+func (p *MemoryProvider) Chmod(path string, mode os.FileMode) error {
+	path = p.normPath(path)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.dirs[path] {
+		p.dirModes[path] = mode
+		return nil
+	}
+
+	f, ok := p.files[path]
+	if !ok {
+		return syscall.ENOENT
+	}
+
+	f.mu.Lock()
+	f.mode = mode
+	f.mu.Unlock()
 	return nil
 }
 
@@ -184,6 +212,7 @@ func (p *MemoryProvider) Remove(path string) error {
 			}
 		}
 		delete(p.dirs, path)
+		delete(p.dirModes, path)
 		return nil
 	}
 
@@ -213,6 +242,7 @@ func (p *MemoryProvider) RemoveAll(path string) error {
 	for k := range p.dirs {
 		if k == path || strings.HasPrefix(k, prefix) {
 			delete(p.dirs, k)
+			delete(p.dirModes, k)
 		}
 	}
 
@@ -230,8 +260,13 @@ func (p *MemoryProvider) Rename(oldPath, newPath string) error {
 		if !p.dirs[oldPath] {
 			return syscall.ENOENT
 		}
+		mode := p.dirModes[oldPath]
 		delete(p.dirs, oldPath)
+		delete(p.dirModes, oldPath)
 		p.dirs[newPath] = true
+		if mode != 0 {
+			p.dirModes[newPath] = mode
+		}
 		return nil
 	}
 

@@ -234,6 +234,7 @@ func (h *Handler) handleExec(ctx context.Context, req *Request) *Response {
 	var params struct {
 		Command    string `json:"command"`
 		WorkingDir string `json:"working_dir,omitempty"`
+		User       string `json:"user,omitempty"`
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return &Response{
@@ -245,6 +246,7 @@ func (h *Handler) handleExec(ctx context.Context, req *Request) *Response {
 
 	opts := &api.ExecOptions{
 		WorkingDir: params.WorkingDir,
+		User:       params.User,
 	}
 
 	result, err := vm.Exec(ctx, params.Command, opts)
@@ -292,6 +294,7 @@ func (h *Handler) handleExecStream(ctx context.Context, req *Request) *Response 
 	var params struct {
 		Command    string `json:"command"`
 		WorkingDir string `json:"working_dir,omitempty"`
+		User       string `json:"user,omitempty"`
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return &Response{
@@ -307,6 +310,7 @@ func (h *Handler) handleExecStream(ctx context.Context, req *Request) *Response 
 
 	opts := &api.ExecOptions{
 		WorkingDir: params.WorkingDir,
+		User:       params.User,
 		Stdout:     stdoutWriter,
 		Stderr:     stderrWriter,
 	}

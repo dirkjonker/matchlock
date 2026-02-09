@@ -17,6 +17,19 @@ func prepareExecEnv(config *api.Config, caPool *sandboxnet.CAPool, pol *policy.E
 		WorkingDir: config.GetWorkspace(),
 		Env:        make(map[string]string),
 	}
+
+	if ic := config.ImageCfg; ic != nil {
+		for k, v := range ic.Env {
+			opts.Env[k] = v
+		}
+		if ic.WorkingDir != "" {
+			opts.WorkingDir = ic.WorkingDir
+		}
+		if ic.User != "" {
+			opts.User = ic.User
+		}
+	}
+
 	if caPool != nil {
 		certPath := "/etc/ssl/certs/matchlock-ca.crt"
 		opts.Env["SSL_CERT_FILE"] = certPath
@@ -43,6 +56,9 @@ func execCommand(ctx context.Context, machine vm.Machine, config *api.Config, ca
 	prepared := prepareExecEnv(config, caPool, pol)
 	if opts.WorkingDir == "" {
 		opts.WorkingDir = prepared.WorkingDir
+	}
+	if opts.User == "" {
+		opts.User = prepared.User
 	}
 	for k, v := range prepared.Env {
 		opts.Env[k] = v

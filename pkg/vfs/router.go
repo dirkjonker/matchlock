@@ -84,6 +84,14 @@ func (r *MountRouter) Mkdir(path string, mode os.FileMode) error {
 	return p.Mkdir(rel, mode)
 }
 
+func (r *MountRouter) Chmod(path string, mode os.FileMode) error {
+	p, rel, err := r.resolve(path)
+	if err != nil {
+		return err
+	}
+	return p.Chmod(rel, mode)
+}
+
 func (r *MountRouter) Remove(path string) error {
 	p, rel, err := r.resolve(path)
 	if err != nil {

@@ -236,6 +236,7 @@ type ExecRequest struct {
 	WorkingDir string            `json:"working_dir,omitempty"`
 	Env        map[string]string `json:"env,omitempty"`
 	Stdin      []byte            `json:"stdin,omitempty"`
+	User       string            `json:"user,omitempty"` // "uid", "uid:gid", or username
 }
 
 // ExecTTYRequest is sent from host to guest for interactive execution
@@ -246,6 +247,7 @@ type ExecTTYRequest struct {
 	Env        map[string]string `json:"env,omitempty"`
 	Rows       uint16            `json:"rows"`
 	Cols       uint16            `json:"cols"`
+	User       string            `json:"user,omitempty"` // "uid", "uid:gid", or username
 }
 
 // WindowSize represents terminal dimensions

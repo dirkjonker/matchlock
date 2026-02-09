@@ -1,5 +1,11 @@
 # Release Notes
 
+## 0.1.10
+
+- **User and entrypoint overrides** — Added `--user` (`-u`) flag to `run` and `exec` to run as a specific user (uid, uid:gid, or username), and `--entrypoint` flag to override the image's ENTRYPOINT. Commands are now composed from OCI image config (ENTRYPOINT + CMD) when no explicit command is given, matching Docker behavior.
+- **VFS chmod support** — Added `Chmod` operation across all VFS providers and the guest FUSE daemon, enabling proper file permission management inside sandboxes.
+- **Image config improvements** — OCI image config (USER, ENTRYPOINT, CMD, WORKDIR, ENV) is now properly extracted, cached, and merged through both the Go and Python SDKs, with in-guest user resolution via `/etc/passwd`.
+
 ## 0.1.9
 
 ### Bug Fixes

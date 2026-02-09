@@ -75,6 +75,8 @@ func init() {
 	runCmd.Flags().Bool("rm", true, "Remove sandbox after command exits (set --rm=false to keep running)")
 	runCmd.Flags().Bool("privileged", false, "Skip in-guest security restrictions (seccomp, cap drop, no_new_privs)")
 	runCmd.Flags().StringP("workdir", "w", "", "Working directory inside the sandbox (default: workspace path)")
+	runCmd.Flags().StringP("user", "u", "", "Run as user (uid, uid:gid, or username; overrides image USER)")
+	runCmd.Flags().String("entrypoint", "", "Override image ENTRYPOINT")
 	runCmd.Flags().Duration("graceful-shutdown", api.DefaultGracefulShutdownPeriod, "Graceful shutdown timeout before force-stopping the VM ")
 	runCmd.MarkFlagRequired("image")
 
@@ -124,11 +126,10 @@ func runRun(cmd *cobra.Command, args []string) error {
 	// Shutdown
 	gracefulShutdown, _ := cmd.Flags().GetDuration("graceful-shutdown")
 
-	command := api.ShellQuoteArgs(args)
+	user, _ := cmd.Flags().GetString("user")
+	entrypoint, _ := cmd.Flags().GetString("entrypoint")
 
-	if rm && len(args) == 0 && !interactiveMode {
-		return fmt.Errorf("command required (or use --rm=false to start without a command)")
-	}
+	command := api.ShellQuoteArgs(args)
 
 	var ctx context.Context
 	var cancel context.CancelFunc
@@ -153,6 +154,52 @@ func runRun(cmd *cobra.Command, args []string) error {
 	if !buildResult.Cached {
 		fmt.Fprintf(os.Stderr, "Built rootfs from %s (%.1f MB)\n", imageName, float64(buildResult.Size)/(1024*1024))
 	}
+
+	var imageCfg *api.ImageConfig
+	if buildResult.OCI != nil {
+		imageCfg = &api.ImageConfig{
+			User:       buildResult.OCI.User,
+			WorkingDir: buildResult.OCI.WorkingDir,
+			Entrypoint: buildResult.OCI.Entrypoint,
+			Cmd:        buildResult.OCI.Cmd,
+			Env:        buildResult.OCI.Env,
+		}
+	}
+
+	// CLI --user overrides image USER
+	if user != "" {
+		if imageCfg == nil {
+			imageCfg = &api.ImageConfig{}
+		}
+		imageCfg.User = user
+	}
+
+	// CLI --entrypoint overrides image ENTRYPOINT (single string, like Docker)
+	if cmd.Flags().Changed("entrypoint") {
+		if imageCfg == nil {
+			imageCfg = &api.ImageConfig{}
+		}
+		if entrypoint == "" {
+			imageCfg.Entrypoint = nil
+		} else {
+			imageCfg.Entrypoint = []string{entrypoint}
+		}
+	}
+
+	// Compose command from image ENTRYPOINT/CMD and user args.
+	// Always route through ComposeCommand so --entrypoint is applied even when
+	// user provides args (args replace CMD but ENTRYPOINT is always prepended).
+	if imageCfg != nil {
+		composed := imageCfg.ComposeCommand(args)
+		if len(composed) > 0 {
+			command = api.ShellQuoteArgs(composed)
+		}
+	}
+
+	if rm && command == "" && !interactiveMode {
+		return fmt.Errorf("command required (or use --rm=false to start without a command)")
+	}
+
 	sandboxOpts := &sandbox.Options{RootfsPath: buildResult.RootfsPath}
 
 	vfsConfig := &api.VFSConfig{Workspace: workspace}
@@ -199,7 +246,8 @@ func runRun(cmd *cobra.Command, args []string) error {
 			Secrets:         parsedSecrets,
 			DNSServers:      dnsServers,
 		},
-		VFS: vfsConfig,
+		VFS:      vfsConfig,
+		ImageCfg: imageCfg,
 	}
 
 	sb, err := sandbox.New(ctx, config, sandboxOpts)
@@ -242,10 +290,13 @@ func runRun(cmd *cobra.Command, args []string) error {
 		os.Exit(exitCode)
 	}
 
-	if len(args) > 0 {
-		var opts *api.ExecOptions
+	if command != "" {
+		opts := &api.ExecOptions{
+			Stdout: os.Stdout,
+			Stderr: os.Stderr,
+		}
 		if workdir != "" {
-			opts = &api.ExecOptions{WorkingDir: workdir}
+			opts.WorkingDir = workdir
 		}
 		result, err := sb.Exec(ctx, command, opts)
 		if err != nil {
@@ -257,9 +308,6 @@ func runRun(cmd *cobra.Command, args []string) error {
 			}
 			return fmt.Errorf("executing command: %w", err)
 		}
-
-		os.Stdout.Write(result.Stdout)
-		os.Stderr.Write(result.Stderr)
 
 		if rm {
 			c, cancel := closeCtx()

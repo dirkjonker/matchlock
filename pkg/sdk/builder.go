@@ -118,6 +118,51 @@ func (b *SandboxBuilder) MountOverlay(guestPath, hostPath string) *SandboxBuilde
 	return b.Mount(guestPath, MountConfig{Type: "overlay", HostPath: hostPath})
 }
 
+// WithUser sets the user to run commands as (uid, uid:gid, or username).
+func (b *SandboxBuilder) WithUser(user string) *SandboxBuilder {
+	if b.opts.ImageConfig == nil {
+		b.opts.ImageConfig = &ImageConfig{}
+	}
+	b.opts.ImageConfig.User = user
+	return b
+}
+
+// WithEntrypoint sets the image entrypoint override.
+func (b *SandboxBuilder) WithEntrypoint(entrypoint ...string) *SandboxBuilder {
+	if b.opts.ImageConfig == nil {
+		b.opts.ImageConfig = &ImageConfig{}
+	}
+	b.opts.ImageConfig.Entrypoint = entrypoint
+	return b
+}
+
+// WithImageConfig merges the given image configuration into any existing config.
+// Fields set in cfg override existing values; zero-value fields are left unchanged.
+func (b *SandboxBuilder) WithImageConfig(cfg *ImageConfig) *SandboxBuilder {
+	if cfg == nil {
+		return b
+	}
+	if b.opts.ImageConfig == nil {
+		b.opts.ImageConfig = &ImageConfig{}
+	}
+	if cfg.User != "" {
+		b.opts.ImageConfig.User = cfg.User
+	}
+	if cfg.WorkingDir != "" {
+		b.opts.ImageConfig.WorkingDir = cfg.WorkingDir
+	}
+	if cfg.Entrypoint != nil {
+		b.opts.ImageConfig.Entrypoint = cfg.Entrypoint
+	}
+	if cfg.Cmd != nil {
+		b.opts.ImageConfig.Cmd = cfg.Cmd
+	}
+	if cfg.Env != nil {
+		b.opts.ImageConfig.Env = cfg.Env
+	}
+	return b
+}
+
 // Options returns the underlying CreateOptions. Useful when you need to pass
 // the options to Client.Create directly.
 func (b *SandboxBuilder) Options() CreateOptions {

@@ -54,6 +54,9 @@ func (p *OverlayProvider) Open(path string, flags int, mode os.FileMode) (Handle
 		if flags&os.O_CREATE == 0 {
 			_, err := p.upper.Stat(path)
 			if err != nil {
+				if !os.IsNotExist(err) && err != syscall.ENOENT {
+					return nil, err
+				}
 				if err := p.copyUp(path); err != nil {
 					return nil, err
 				}
@@ -77,6 +80,19 @@ func (p *OverlayProvider) Mkdir(path string, mode os.FileMode) error {
 	return p.upper.Mkdir(path, mode)
 }
 
+func (p *OverlayProvider) Chmod(path string, mode os.FileMode) error {
+	_, err := p.upper.Stat(path)
+	if err != nil {
+		if !os.IsNotExist(err) && err != syscall.ENOENT {
+			return err
+		}
+		if err := p.copyUp(path); err != nil {
+			return err
+		}
+	}
+	return p.upper.Chmod(path, mode)
+}
+
 func (p *OverlayProvider) Remove(path string) error {
 	return p.upper.Remove(path)
 }
@@ -88,6 +104,9 @@ func (p *OverlayProvider) RemoveAll(path string) error {
 func (p *OverlayProvider) Rename(oldPath, newPath string) error {
 	_, err := p.upper.Stat(oldPath)
 	if err != nil {
+		if !os.IsNotExist(err) && err != syscall.ENOENT {
+			return err
+		}
 		if err := p.copyUp(oldPath); err != nil {
 			return err
 		}

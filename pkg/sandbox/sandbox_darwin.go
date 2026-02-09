@@ -112,7 +112,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 
 	// Inject CA cert into rootfs before backend.Create() attaches the disk
 	if caPool != nil {
-		if err := injectFileIntoRootfs(prebuiltRootfs, "/etc/ssl/certs/matchlock-ca.crt", caPool.CACertPEM()); err != nil {
+		if err := injectConfigFileIntoRootfs(prebuiltRootfs, "/etc/ssl/certs/matchlock-ca.crt", caPool.CACertPEM()); err != nil {
 			os.Remove(prebuiltRootfs)
 			subnetAlloc.Release(id)
 			stateMgr.Unregister(id)
