@@ -170,8 +170,6 @@ func (m *Manager) Remove(id string) error {
 	return os.RemoveAll(filepath.Join(m.baseDir, id))
 }
 
-
-
 func (m *Manager) Prune() ([]string, error) {
 	states, err := m.List()
 	if err != nil {
