@@ -18,24 +18,24 @@ import (
 )
 
 var buildCmd = &cobra.Command{
-	Use:   "build [flags] <image-or-context>",
-	Short: "Build rootfs from container image or Dockerfile",
-	Long: `Build a rootfs from a container image, or build from a Dockerfile using BuildKit-in-VM.
+	Use:   "build [flags] <context>",
+	Short: "Build image from a Dockerfile using BuildKit-in-VM",
+	Long: `Build an image from a Dockerfile using BuildKit-in-VM.
 
-When used with -f/--file, boots a privileged VM with BuildKit to build the Dockerfile.
-The build context is the directory argument (defaults to current directory).`,
-	Example: `  matchlock build alpine:latest
-  matchlock build -t myapp:latest alpine:latest
-  matchlock build -f Dockerfile -t myapp:latest .
-  matchlock build -f Dockerfile -t myapp:latest ./myapp`,
+The argument is the build context directory. If a Dockerfile exists in the context directory,
+it is picked up automatically. Use -f/--file to specify an alternative Dockerfile.
+
+To pull a pre-built container image, use "matchlock pull" instead.`,
+	Example: `  matchlock build -t myapp:latest .
+  matchlock build -t myapp:latest ./myapp
+  matchlock build -f Dockerfile.dev -t myapp:latest .`,
 	Args: cobra.ExactArgs(1),
 	RunE: runBuild,
 }
 
 func init() {
-	buildCmd.Flags().Bool("pull", false, "Always pull image from registry (ignore cache)")
-	buildCmd.Flags().StringP("tag", "t", "", "Tag the image locally")
-	buildCmd.Flags().StringP("file", "f", "", "Path to Dockerfile (enables BuildKit-in-VM build)")
+	buildCmd.Flags().StringP("tag", "t", "", "Tag the built image locally")
+	buildCmd.Flags().StringP("file", "f", "Dockerfile", "Path to Dockerfile")
 	buildCmd.Flags().Int("build-cpus", 0, "Number of CPUs for BuildKit VM (0 = all available)")
 	buildCmd.Flags().Int("build-memory", 0, "Memory in MB for BuildKit VM (0 = all available)")
 	buildCmd.Flags().Int("build-disk", 10240, "Disk size in MB for BuildKit VM")
@@ -48,37 +48,13 @@ func init() {
 func runBuild(cmd *cobra.Command, args []string) error {
 	dockerfile, _ := cmd.Flags().GetString("file")
 	tag, _ := cmd.Flags().GetString("tag")
-	pull, _ := cmd.Flags().GetBool("pull")
 
-	if dockerfile != "" {
-		return runDockerfileBuild(cmd, args[0], dockerfile, tag)
+	// If -f was not explicitly set, resolve the default relative to the context directory.
+	if !cmd.Flags().Changed("file") {
+		dockerfile = filepath.Join(args[0], dockerfile)
 	}
 
-	imageRef := args[0]
-	builder := image.NewBuilder(&image.BuildOptions{
-		ForcePull: pull,
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	fmt.Printf("Building rootfs from %s...\n", imageRef)
-	result, err := builder.Build(ctx, imageRef)
-	if err != nil {
-		return err
-	}
-
-	if tag != "" {
-		if err := builder.SaveTag(tag, result); err != nil {
-			return fmt.Errorf("saving tag: %w", err)
-		}
-		fmt.Printf("Tagged: %s\n", tag)
-	}
-
-	fmt.Printf("Built: %s\n", result.RootfsPath)
-	fmt.Printf("Digest: %s\n", result.Digest)
-	fmt.Printf("Size: %.1f MB\n", float64(result.Size)/(1024*1024))
-	return nil
+	return runDockerfileBuild(cmd, args[0], dockerfile, tag)
 }
 
 // buildCachePath returns the path to the persistent BuildKit cache ext4 image.

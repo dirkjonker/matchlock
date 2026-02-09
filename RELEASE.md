@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Breaking Changes
+
+- **Split `matchlock build` into `build` and `pull`** — `matchlock build` is now exclusively for Dockerfile builds (using BuildKit-in-VM). Image pulling has moved to the new `matchlock pull` command. The `-f` flag now defaults to `Dockerfile`, so `matchlock build -t myapp:latest .` works without specifying `-f`.
+
 ### Bug Fixes
 
 - **`matchlock rm` now errors when VM ID is not found** ([#14](https://github.com/jingkaihe/matchlock/issues/14))

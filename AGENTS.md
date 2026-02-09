@@ -136,12 +136,14 @@ matchlock kill --all               # Kill all running sandboxes
 matchlock rm vm-abc123             # Remove stopped sandbox state
 matchlock prune                    # Remove all stopped/crashed state
 
-# Pre-build rootfs (caches for faster startup)
-matchlock build alpine:latest
+# Pull and cache container image rootfs
+matchlock pull alpine:latest
+matchlock pull --force alpine:latest
 
 # Build from Dockerfile (uses BuildKit-in-VM with privileged mode)
-matchlock build -f Dockerfile -t myapp:latest .
-matchlock build -f Dockerfile -t myapp:latest ./myapp
+matchlock build -t myapp:latest .
+matchlock build -t myapp:latest ./myapp
+matchlock build -f Dockerfile.dev -t myapp:latest .
 
 # Privileged mode (skips in-guest seccomp/cap restrictions)
 matchlock run --privileged --image moby/buildkit:rootless -it sh
