@@ -102,7 +102,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 			stateMgr.Unregister(id)
 			return nil, fmt.Errorf("failed to create CA pool: %w", err)
 		}
-		if err := injectFileIntoRootfs(vmRootfsPath, "/etc/ssl/certs/matchlock-ca.crt", caPool.CACertPEM()); err != nil {
+		if err := injectConfigFileIntoRootfs(vmRootfsPath, "/etc/ssl/certs/matchlock-ca.crt", caPool.CACertPEM()); err != nil {
 			os.Remove(vmRootfsPath)
 			stateMgr.Unregister(id)
 			return nil, fmt.Errorf("failed to inject CA cert into rootfs: %w", err)
