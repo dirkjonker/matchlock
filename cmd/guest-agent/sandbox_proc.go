@@ -329,10 +329,6 @@ func resolveUserFrom(spec, passwdPath, groupPath string) (uid, gid int, homeDir 
 	return uid, gid, homeDir, nil
 }
 
-func resolveUID(s string) (int, error) {
-	return resolveUIDFrom(s, "/etc/passwd")
-}
-
 func resolveUIDFrom(s, passwdPath string) (int, error) {
 	if n, err := strconv.Atoi(s); err == nil {
 		return n, nil
@@ -342,10 +338,6 @@ func resolveUIDFrom(s, passwdPath string) (int, error) {
 		return 0, fmt.Errorf("user %q not found", s)
 	}
 	return uid, nil
-}
-
-func resolveGID(s string) (int, error) {
-	return resolveGIDFrom(s, "/etc/group")
 }
 
 func resolveGIDFrom(s, groupPath string) (int, error) {
@@ -374,11 +366,6 @@ func resolveGIDFrom(s, groupPath string) (int, error) {
 	return 0, fmt.Errorf("group %q not found", s)
 }
 
-// lookupPasswdByName returns uid, gid, homeDir, ok for a username from /etc/passwd.
-func lookupPasswdByName(name string) (int, int, string, bool) {
-	return lookupPasswdByNameFrom(name, "/etc/passwd")
-}
-
 func lookupPasswdByNameFrom(name, passwdPath string) (int, int, string, bool) {
 	f, err := os.Open(passwdPath)
 	if err != nil {
@@ -401,11 +388,6 @@ func lookupPasswdByNameFrom(name, passwdPath string) (int, int, string, bool) {
 	return 0, 0, "", false
 }
 
-// lookupPasswdByUID returns gid, shell, homeDir for a UID from /etc/passwd.
-func lookupPasswdByUID(uid int) (gid int, shell string, homeDir string) {
-	return lookupPasswdByUIDFrom(uid, "/etc/passwd")
-}
-
 func lookupPasswdByUIDFrom(uid int, passwdPath string) (gid int, shell string, homeDir string) {
 	f, err := os.Open(passwdPath)
 	if err != nil {
@@ -416,6 +398,9 @@ func lookupPasswdByUIDFrom(uid int, passwdPath string) (gid int, shell string, h
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
+		if strings.HasPrefix(line, "#") || line == "" {
+			continue
+		}
 		fields := strings.SplitN(line, ":", 7)
 		if len(fields) >= 6 && fields[2] == uidStr {
 			gid, _ := strconv.Atoi(fields[3])

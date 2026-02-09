@@ -29,6 +29,7 @@ func init() {
 	execCmd.Flags().BoolP("tty", "t", false, "Allocate a pseudo-TTY")
 	execCmd.Flags().BoolP("interactive", "i", false, "Keep STDIN open")
 	execCmd.Flags().StringP("workdir", "w", "", "Working directory inside the sandbox (default: workspace path)")
+	execCmd.Flags().StringP("user", "u", "", "Run as user (uid, uid:gid, or username)")
 
 	rootCmd.AddCommand(execCmd)
 }
@@ -40,6 +41,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 	tty, _ := cmd.Flags().GetBool("tty")
 	interactive, _ := cmd.Flags().GetBool("interactive")
 	workdir, _ := cmd.Flags().GetString("workdir")
+	user, _ := cmd.Flags().GetString("user")
 	interactiveMode := tty && interactive
 
 	if len(cmdArgs) == 0 && !interactiveMode {
@@ -66,10 +68,10 @@ func runExec(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	if interactiveMode {
-		return runExecInteractive(ctx, execSocketPath, command, workdir)
+		return runExecInteractive(ctx, execSocketPath, command, workdir, user)
 	}
 
-	result, err := sandbox.ExecViaRelay(ctx, execSocketPath, command, workdir)
+	result, err := sandbox.ExecViaRelay(ctx, execSocketPath, command, workdir, user)
 	if err != nil {
 		return fmt.Errorf("exec failed: %w", err)
 	}
@@ -80,7 +82,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runExecInteractive(ctx context.Context, execSocketPath, command, workdir string) error {
+func runExecInteractive(ctx context.Context, execSocketPath, command, workdir, user string) error {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return fmt.Errorf("-it requires a TTY")
 	}
@@ -96,7 +98,7 @@ func runExecInteractive(ctx context.Context, execSocketPath, command, workdir st
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	exitCode, err := sandbox.ExecInteractiveViaRelay(ctx, execSocketPath, command, workdir, uint16(rows), uint16(cols), os.Stdin, os.Stdout)
+	exitCode, err := sandbox.ExecInteractiveViaRelay(ctx, execSocketPath, command, workdir, user, uint16(rows), uint16(cols), os.Stdin, os.Stdout)
 	if err != nil {
 		term.Restore(int(os.Stdin.Fd()), oldState)
 		return fmt.Errorf("interactive exec failed: %w", err)

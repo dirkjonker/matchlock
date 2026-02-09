@@ -128,6 +128,20 @@ func TestLookupPasswdByUID_NotFound_DefaultsGIDToUID(t *testing.T) {
 	}
 }
 
+func TestLookupPasswdByUID_SkipsComments(t *testing.T) {
+	passwd := writeTempFile(t, "passwd", "# commented:x:1000:1000:Commented:/home/c:/bin/sh\nreal:x:1000:1000:Real:/home/real:/bin/bash\n")
+	gid, shell, dir := lookupPasswdByUIDFrom(1000, passwd)
+	if dir != "/home/real" {
+		t.Errorf("dir = %q, want /home/real (should skip commented line)", dir)
+	}
+	if gid != 1000 {
+		t.Errorf("gid = %d, want 1000", gid)
+	}
+	if shell != "/bin/bash" {
+		t.Errorf("shell = %q, want /bin/bash", shell)
+	}
+}
+
 func TestResolveGID_Numeric(t *testing.T) {
 	group := writeTempFile(t, "group", testGroup)
 	gid, err := resolveGIDFrom("42", group)

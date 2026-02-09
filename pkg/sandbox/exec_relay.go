@@ -27,11 +27,13 @@ const (
 type relayExecRequest struct {
 	Command    string `json:"command"`
 	WorkingDir string `json:"working_dir,omitempty"`
+	User       string `json:"user,omitempty"`
 }
 
 type relayExecInteractiveRequest struct {
 	Command    string `json:"command"`
 	WorkingDir string `json:"working_dir,omitempty"`
+	User       string `json:"user,omitempty"`
 	Rows       uint16 `json:"rows"`
 	Cols       uint16 `json:"cols"`
 }
@@ -115,9 +117,12 @@ func (r *ExecRelay) handleExec(conn net.Conn, data []byte) {
 		return
 	}
 
-	var opts *api.ExecOptions
+	opts := r.sb.PrepareExecEnv()
 	if req.WorkingDir != "" {
-		opts = &api.ExecOptions{WorkingDir: req.WorkingDir}
+		opts.WorkingDir = req.WorkingDir
+	}
+	if req.User != "" {
+		opts.User = req.User
 	}
 
 	result, err := r.sb.Exec(context.Background(), req.Command, opts)
@@ -149,6 +154,9 @@ func (r *ExecRelay) handleExecInteractive(conn net.Conn, data []byte) {
 	opts := r.sb.PrepareExecEnv()
 	if req.WorkingDir != "" {
 		opts.WorkingDir = req.WorkingDir
+	}
+	if req.User != "" {
+		opts.User = req.User
 	}
 
 	stdinReader, stdinWriter := io.Pipe()
@@ -239,14 +247,14 @@ func sendRelayResult(conn net.Conn, result *relayExecResult) {
 }
 
 // ExecViaRelay connects to an exec relay socket and runs a command.
-func ExecViaRelay(ctx context.Context, socketPath, command, workingDir string) (*api.ExecResult, error) {
+func ExecViaRelay(ctx context.Context, socketPath, command, workingDir, user string) (*api.ExecResult, error) {
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("connect to exec relay: %w", err)
 	}
 	defer conn.Close()
 
-	req := relayExecRequest{Command: command, WorkingDir: workingDir}
+	req := relayExecRequest{Command: command, WorkingDir: workingDir, User: user}
 	reqData, _ := json.Marshal(req)
 	if err := sendRelayMsg(conn, relayMsgExec, reqData); err != nil {
 		return nil, fmt.Errorf("send exec request: %w", err)
@@ -282,7 +290,7 @@ func ExecViaRelay(ctx context.Context, socketPath, command, workingDir string) (
 }
 
 // ExecInteractiveViaRelay connects to an exec relay socket and runs an interactive command.
-func ExecInteractiveViaRelay(ctx context.Context, socketPath, command, workingDir string, rows, cols uint16, stdin io.Reader, stdout io.Writer) (int, error) {
+func ExecInteractiveViaRelay(ctx context.Context, socketPath, command, workingDir, user string, rows, cols uint16, stdin io.Reader, stdout io.Writer) (int, error) {
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
 		return 1, fmt.Errorf("connect to exec relay: %w", err)
@@ -292,6 +300,7 @@ func ExecInteractiveViaRelay(ctx context.Context, socketPath, command, workingDi
 	req := relayExecInteractiveRequest{
 		Command:    command,
 		WorkingDir: workingDir,
+		User:       user,
 		Rows:       rows,
 		Cols:       cols,
 	}
