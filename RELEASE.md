@@ -1,6 +1,6 @@
 # Release Notes
 
-## Unreleased
+## 0.1.8
 
 ### Breaking Changes
 
