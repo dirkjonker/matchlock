@@ -172,6 +172,26 @@ func (p *MemoryProvider) Mkdir(path string, mode os.FileMode) error {
 	return nil
 }
 
+func (p *MemoryProvider) Chmod(path string, mode os.FileMode) error {
+	path = p.normPath(path)
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	if p.dirs[path] {
+		return nil
+	}
+
+	f, ok := p.files[path]
+	if !ok {
+		return syscall.ENOENT
+	}
+
+	f.mu.Lock()
+	f.mode = mode
+	f.mu.Unlock()
+	return nil
+}
+
 func (p *MemoryProvider) Remove(path string) error {
 	path = p.normPath(path)
 	p.mu.Lock()

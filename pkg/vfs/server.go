@@ -134,6 +134,16 @@ func (s *VFSServer) dispatch(req *VFSRequest) *VFSResponse {
 		}
 		return &VFSResponse{Stat: statFromInfo(info)}
 
+	case OpSetattr:
+		if err := s.provider.Chmod(req.Path, os.FileMode(req.Mode)); err != nil {
+			return &VFSResponse{Err: errnoFromError(err)}
+		}
+		info, err := s.provider.Stat(req.Path)
+		if err != nil {
+			return &VFSResponse{Err: errnoFromError(err)}
+		}
+		return &VFSResponse{Stat: statFromInfo(info)}
+
 	case OpOpen:
 		h, err := s.provider.Open(req.Path, int(req.Flags), os.FileMode(req.Mode))
 		if err != nil {

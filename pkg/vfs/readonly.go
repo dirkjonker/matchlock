@@ -32,6 +32,7 @@ func (p *ReadonlyProvider) Create(path string, mode os.FileMode) (Handle, error)
 	return nil, syscall.EROFS
 }
 
+func (p *ReadonlyProvider) Chmod(path string, mode os.FileMode) error { return syscall.EROFS }
 func (p *ReadonlyProvider) Mkdir(path string, mode os.FileMode) error { return syscall.EROFS }
 func (p *ReadonlyProvider) Remove(path string) error                  { return syscall.EROFS }
 func (p *ReadonlyProvider) RemoveAll(path string) error               { return syscall.EROFS }

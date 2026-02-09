@@ -77,6 +77,16 @@ func (p *OverlayProvider) Mkdir(path string, mode os.FileMode) error {
 	return p.upper.Mkdir(path, mode)
 }
 
+func (p *OverlayProvider) Chmod(path string, mode os.FileMode) error {
+	_, err := p.upper.Stat(path)
+	if err != nil {
+		if err := p.copyUp(path); err != nil {
+			return err
+		}
+	}
+	return p.upper.Chmod(path, mode)
+}
+
 func (p *OverlayProvider) Remove(path string) error {
 	return p.upper.Remove(path)
 }

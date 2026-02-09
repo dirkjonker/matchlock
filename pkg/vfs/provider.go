@@ -14,6 +14,7 @@ type Provider interface {
 	Open(path string, flags int, mode os.FileMode) (Handle, error)
 	Create(path string, mode os.FileMode) (Handle, error)
 	Mkdir(path string, mode os.FileMode) error
+	Chmod(path string, mode os.FileMode) error
 	Remove(path string) error
 	RemoveAll(path string) error
 	Rename(oldPath, newPath string) error

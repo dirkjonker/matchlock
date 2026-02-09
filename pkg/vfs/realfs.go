@@ -69,6 +69,10 @@ func (p *RealFSProvider) Mkdir(path string, mode os.FileMode) error {
 	return os.Mkdir(p.realPath(path), mode)
 }
 
+func (p *RealFSProvider) Chmod(path string, mode os.FileMode) error {
+	return os.Chmod(p.realPath(path), mode)
+}
+
 func (p *RealFSProvider) Remove(path string) error {
 	return os.Remove(p.realPath(path))
 }

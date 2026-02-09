@@ -319,6 +319,17 @@ func (n *VFSNode) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrO
 }
 
 func (n *VFSNode) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
+	// Handle chmod
+	if mode, ok := in.GetMode(); ok {
+		resp, err := n.client.Request(&VFSRequest{Op: OpSetattr, Path: n.path, Mode: mode})
+		if err != nil {
+			return syscall.EIO
+		}
+		if resp.Err != 0 {
+			return syscall.Errno(-resp.Err)
+		}
+	}
+
 	// Handle truncate
 	if sz, ok := in.GetSize(); ok {
 		resp, err := n.client.Request(&VFSRequest{Op: OpOpen, Path: n.path, Flags: uint32(os.O_RDWR)})
@@ -330,9 +341,7 @@ func (n *VFSNode) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAtt
 		}
 		handle := resp.Handle
 
-		// Write empty data at truncate point (simple truncate simulation)
 		if sz == 0 {
-			// Create empty file by reopening with O_TRUNC
 			n.client.Request(&VFSRequest{Op: OpRelease, Handle: handle})
 			resp, err = n.client.Request(&VFSRequest{Op: OpCreate, Path: n.path, Mode: 0644})
 			if err != nil {
@@ -347,7 +356,6 @@ func (n *VFSNode) Setattr(ctx context.Context, fh fs.FileHandle, in *fuse.SetAtt
 		}
 	}
 
-	// Return current attributes
 	return n.Getattr(ctx, fh, out)
 }
 
