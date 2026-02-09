@@ -27,7 +27,7 @@ var imageLsCmd = &cobra.Command{
 var imageRmCmd = &cobra.Command{
 	Use:     "rm <tag>",
 	Aliases: []string{"remove"},
-	Short:   "Remove an image (local or cached registry)",
+	Short:   "Remove an image",
 	Args:    cobra.ExactArgs(1),
 	RunE:    runImageRm,
 }
