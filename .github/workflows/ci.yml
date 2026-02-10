@@ -30,6 +30,9 @@ jobs:
       - name: Test
         run: mise run test
 
+      - name: Fmt
+        run: test -z "$(gofmt -l .)"
+
       - name: Vet
         run: mise run vet
 
@@ -58,6 +61,9 @@ jobs:
 
       - name: Build
         run: mise run cross-build:darwin
+
+      - name: Fmt
+        run: test -z "$(gofmt -l .)"
 
       - name: Test
         run: mise run test
