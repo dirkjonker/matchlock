@@ -1,11 +1,12 @@
 package image
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -125,11 +126,12 @@ func (b *Builder) Build(ctx context.Context, imageRef string) (*BuildResult, err
 	}
 	defer os.RemoveAll(extractDir)
 
-	if err := b.extractImage(img, extractDir); err != nil {
+	fileMetas, err := b.extractImage(img, extractDir)
+	if err != nil {
 		return nil, fmt.Errorf("extract image: %w", err)
 	}
 
-	if err := b.createExt4(extractDir, rootfsPath); err != nil {
+	if err := b.createExt4(extractDir, rootfsPath, fileMetas); err != nil {
 		os.Remove(rootfsPath)
 		return nil, fmt.Errorf("create ext4: %w", err)
 	}
@@ -138,7 +140,7 @@ func (b *Builder) Build(ctx context.Context, imageRef string) (*BuildResult, err
 
 	fi, _ := os.Stat(rootfsPath)
 
-	meta := ImageMeta{
+	imageMeta := ImageMeta{
 		Tag:       imageRef,
 		Digest:    digest.String(),
 		Size:      fi.Size(),
@@ -146,7 +148,7 @@ func (b *Builder) Build(ctx context.Context, imageRef string) (*BuildResult, err
 		Source:    "registry",
 		OCI:      ociConfig,
 	}
-	if metaBytes, err := json.MarshalIndent(meta, "", "  "); err == nil {
+	if metaBytes, err := json.MarshalIndent(imageMeta, "", "  "); err == nil {
 		os.WriteFile(filepath.Join(cacheDir, "metadata.json"), metaBytes, 0644)
 	}
 
@@ -158,19 +160,82 @@ func (b *Builder) Build(ctx context.Context, imageRef string) (*BuildResult, err
 	}, nil
 }
 
-func (b *Builder) extractImage(img v1.Image, destDir string) error {
+type fileMeta struct {
+	uid  int
+	gid  int
+	mode os.FileMode
+}
+
+func (b *Builder) extractImage(img v1.Image, destDir string) (map[string]fileMeta, error) {
 	reader := mutate.Extract(img)
 	defer reader.Close()
 
-	cmd := exec.Command("tar", "-xf", "-", "-C", destDir, "--numeric-owner")
-	cmd.Stdin = reader
-	cmd.Stderr = os.Stderr
+	meta := make(map[string]fileMeta)
+	tr := tar.NewReader(reader)
 
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("extract tar: %w", err)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read tar: %w", err)
+		}
+
+		clean := filepath.Clean(hdr.Name)
+		if strings.Contains(clean, "..") {
+			continue
+		}
+		target := filepath.Join(destDir, clean)
+
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0755); err != nil {
+				return nil, fmt.Errorf("mkdir %s: %w", clean, err)
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return nil, fmt.Errorf("mkdir parent %s: %w", clean, err)
+			}
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&0777)
+			if err != nil {
+				return nil, fmt.Errorf("create %s: %w", clean, err)
+			}
+			if _, err := io.Copy(f, tr); err != nil {
+				f.Close()
+				return nil, fmt.Errorf("write %s: %w", clean, err)
+			}
+			f.Close()
+		case tar.TypeSymlink:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return nil, fmt.Errorf("mkdir parent %s: %w", clean, err)
+			}
+			os.Remove(target)
+			if err := os.Symlink(hdr.Linkname, target); err != nil {
+				return nil, fmt.Errorf("symlink %s: %w", clean, err)
+			}
+		case tar.TypeLink:
+			linkTarget := filepath.Join(destDir, filepath.Clean(hdr.Linkname))
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return nil, fmt.Errorf("mkdir parent %s: %w", clean, err)
+			}
+			os.Remove(target)
+			if err := os.Link(linkTarget, target); err != nil {
+				return nil, fmt.Errorf("hardlink %s: %w", clean, err)
+			}
+		default:
+			continue
+		}
+
+		relPath := "/" + clean
+		meta[relPath] = fileMeta{
+			uid:  hdr.Uid,
+			gid:  hdr.Gid,
+			mode: os.FileMode(hdr.Mode) & os.ModePerm,
+		}
 	}
 
-	return nil
+	return meta, nil
 }
 
 func (b *Builder) SaveTag(tag string, result *BuildResult) error {

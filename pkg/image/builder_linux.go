@@ -19,7 +19,7 @@ func (b *Builder) platformOptions() []remote.Option {
 }
 
 // createExt4 creates an ext4 filesystem using debugfs (no root required)
-func (b *Builder) createExt4(sourceDir, destPath string) error {
+func (b *Builder) createExt4(sourceDir, destPath string, meta map[string]fileMeta) error {
 	mke2fsPath, err := exec.LookPath("mke2fs")
 	if err != nil {
 		mke2fsPath, err = exec.LookPath("mkfs.ext4")
@@ -81,6 +81,20 @@ func (b *Builder) createExt4(sourceDir, destPath string) error {
 			if err == nil {
 				debugfsCommands.WriteString(fmt.Sprintf("symlink %s %s\n", ext4Path, target))
 			}
+		}
+
+		if fm, ok := meta[ext4Path]; ok {
+			debugfsCommands.WriteString(fmt.Sprintf("set_inode_field %s uid %d\n", ext4Path, fm.uid))
+			debugfsCommands.WriteString(fmt.Sprintf("set_inode_field %s gid %d\n", ext4Path, fm.gid))
+			var typeBits uint32
+			if info.IsDir() {
+				typeBits = 0o040000
+			} else if info.Mode()&os.ModeSymlink != 0 {
+				typeBits = 0o120000
+			} else {
+				typeBits = 0o100000
+			}
+			debugfsCommands.WriteString(fmt.Sprintf("set_inode_field %s mode 0%o\n", ext4Path, typeBits|uint32(fm.mode)))
 		}
 		return nil
 	})

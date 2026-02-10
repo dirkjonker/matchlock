@@ -38,7 +38,8 @@ func (b *Builder) Import(ctx context.Context, reader io.Reader, tag string) (*Bu
 	}
 	defer os.RemoveAll(extractDir)
 
-	if err := b.extractImage(img, extractDir); err != nil {
+	fileMetas, err := b.extractImage(img, extractDir)
+	if err != nil {
 		return nil, fmt.Errorf("extract image: %w", err)
 	}
 
@@ -49,7 +50,7 @@ func (b *Builder) Import(ctx context.Context, reader io.Reader, tag string) (*Bu
 	rootfsTmp.Close()
 	rootfsPath := rootfsTmp.Name()
 
-	if err := b.createExt4(extractDir, rootfsPath); err != nil {
+	if err := b.createExt4(extractDir, rootfsPath, fileMetas); err != nil {
 		os.Remove(rootfsPath)
 		return nil, fmt.Errorf("create ext4: %w", err)
 	}
