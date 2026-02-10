@@ -696,6 +696,93 @@ func TestLstatWalk_SymlinksNotFollowed(t *testing.T) {
 	}
 }
 
+func TestExtractImage_SetuidPreserved(t *testing.T) {
+	img := buildTarImage(t, []tar.Header{
+		{Name: "bin/", Typeflag: tar.TypeDir, Mode: 0755},
+		{Name: "bin/ping", Typeflag: tar.TypeReg, Mode: 0o4755, Uid: 0, Gid: 0},
+		{Name: "bin/wall", Typeflag: tar.TypeReg, Mode: 0o2755, Uid: 0, Gid: 5},
+		{Name: "tmp/", Typeflag: tar.TypeDir, Mode: 0o1777},
+	}, map[string][]byte{
+		"bin/ping": []byte("suid-binary"),
+		"bin/wall": []byte("sgid-binary"),
+	})
+
+	b := &Builder{}
+	dest := t.TempDir()
+	meta, err := b.extractImage(img, dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		path string
+		mode os.FileMode
+	}{
+		{"/bin/ping", 0o4755},
+		{"/bin/wall", 0o2755},
+		{"/tmp", 0o1777},
+	}
+	for _, tc := range tests {
+		fm, ok := meta[tc.path]
+		if !ok {
+			t.Errorf("missing metadata for %s", tc.path)
+			continue
+		}
+		if fm.mode != tc.mode {
+			t.Errorf("%s: mode = %o, want %o", tc.path, fm.mode, tc.mode)
+		}
+	}
+}
+
+func TestExtractImage_HardlinkMetadataSkipped(t *testing.T) {
+	img := buildTarImage(t, []tar.Header{
+		{Name: "bin/", Typeflag: tar.TypeDir, Mode: 0755},
+		{Name: "bin/original", Typeflag: tar.TypeReg, Mode: 0755, Uid: 0, Gid: 0},
+		{Name: "bin/hardlink", Typeflag: tar.TypeLink, Linkname: "bin/original"},
+	}, map[string][]byte{
+		"bin/original": []byte("binary"),
+	})
+
+	b := &Builder{}
+	dest := t.TempDir()
+	meta, err := b.extractImage(img, dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := meta["/bin/hardlink"]; ok {
+		t.Error("hardlink should not have its own metadata entry (shares inode with target)")
+	}
+
+	fm, ok := meta["/bin/original"]
+	if !ok {
+		t.Fatal("expected metadata for /bin/original")
+	}
+	if fm.mode != 0755 {
+		t.Errorf("/bin/original mode = %o, want 755", fm.mode)
+	}
+}
+
+func TestHasDebugfsUnsafeChars(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"/normal/path", false},
+		{"/path with spaces", false},
+		{"/path\nwith\nnewlines", true},
+		{"/path\rwith\rCR", true},
+		{"/path\x00with\x00null", true},
+		{"/clean-file.txt", false},
+	}
+	for _, tc := range tests {
+		got := hasDebugfsUnsafeChars(tc.path)
+		if got != tc.want {
+			t.Errorf("hasDebugfsUnsafeChars(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
 func TestLstatWalkErr_PropagatesError(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "a.txt"), []byte("a"), 0644)
