@@ -33,6 +33,7 @@ var setupLinuxCmd = &cobra.Command{
   4. Enabling IP forwarding
   5. Configuring /dev/net/tun
   6. Ensuring nftables kernel module is loaded
+  7. Configuring firewalld polkit rule (if firewalld is installed)
 
 This command requires root privileges.`,
 	RunE: runSetupLinux,
@@ -338,6 +339,10 @@ func setupNetwork() error {
 		fmt.Printf("⚠ nftables check: %v\n", err)
 	}
 
+	if err := setupFirewalldPolkit(); err != nil {
+		fmt.Printf("⚠ Could not setup firewalld polkit rule: %v\n", err)
+	}
+
 	return nil
 }
 
@@ -371,5 +376,41 @@ func checkNftables() error {
 		return fmt.Errorf("nf_tables module not available: %w", err)
 	}
 	fmt.Println("✓ nftables kernel module loaded")
+	return nil
+}
+
+func setupFirewalldPolkit() error {
+	// Skip if firewalld is not installed
+	if _, err := exec.LookPath("firewall-cmd"); err != nil {
+		return nil
+	}
+
+	rulesDir := "/etc/polkit-1/rules.d"
+	if _, err := os.Stat(rulesDir); err != nil {
+		return nil // polkit rules.d not present, skip
+	}
+
+	rulesFile := filepath.Join(rulesDir, "50-matchlock-firewalld.rules")
+	content := `// Allow netdev group members to add/remove firewalld zone interfaces
+// without password prompts. Installed by: matchlock setup linux
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.fedoraproject.FirewallD1") === 0 &&
+        subject.isInGroup("netdev")) {
+        return polkit.Result.YES;
+    }
+});
+`
+
+	if existing, err := os.ReadFile(rulesFile); err == nil {
+		if string(existing) == content {
+			fmt.Println("✓ firewalld polkit rule already configured")
+			return nil
+		}
+	}
+
+	if err := os.WriteFile(rulesFile, []byte(content), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", rulesFile, err)
+	}
+	fmt.Printf("✓ Installed firewalld polkit rule (%s)\n", rulesFile)
 	return nil
 }

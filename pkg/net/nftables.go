@@ -5,6 +5,7 @@ package net
 import (
 	"fmt"
 	"net"
+	"os"
 
 	"github.com/google/nftables"
 	"github.com/google/nftables/binaryutil"
@@ -321,9 +322,10 @@ func ifname(n string) []byte {
 }
 
 type NFTablesNAT struct {
-	tapInterface string
-	conn         *nftables.Conn
-	table        *nftables.Table
+	tapInterface    string
+	conn            *nftables.Conn
+	table           *nftables.Table
+	firewalldManaged bool
 }
 
 func NewNFTablesNAT(tapInterface string) *NFTablesNAT {
@@ -412,10 +414,25 @@ func (n *NFTablesNAT) Setup() error {
 		return fmt.Errorf("failed to apply NAT rules: %w", err)
 	}
 
+	// If firewalld is running, add the TAP interface to its trusted zone.
+	// Without this, firewalld's filter_FORWARD chain rejects forwarded traffic
+	// from interfaces not assigned to any zone.
+	if isFirewalldRunning() {
+		if err := addInterfaceToTrustedZone(n.tapInterface); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to add %s to firewalld trusted zone: %v\n", n.tapInterface, err)
+		} else {
+			n.firewalldManaged = true
+		}
+	}
+
 	return nil
 }
 
 func (n *NFTablesNAT) Cleanup() error {
+	if n.firewalldManaged {
+		removeInterfaceFromTrustedZone(n.tapInterface)
+	}
+
 	if n.conn == nil {
 		conn, err := nftables.New()
 		if err != nil {
