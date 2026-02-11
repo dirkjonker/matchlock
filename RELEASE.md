@@ -1,5 +1,9 @@
 # Release Notes
 
+## Unreleased
+
+Added end-to-end context cancellation support across the entire matchlock stack.
+
 ## 0.1.11
 
 * Image extraction now uses pure Go instead of shelling out to `tar`**, preserving file ownership (uid/gid), permissions (including setuid/setgid/sticky bits) and symlinks when building ext4 rootfs images. This fixes symlink loop crashes (e.g. Playwright/Chromium images) by replacing symlink directories with real ones during extraction.
