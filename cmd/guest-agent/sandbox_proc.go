@@ -269,6 +269,17 @@ func runSandboxLauncher() {
 func applySandboxSysProcAttr(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
+		Pdeathsig:  syscall.SIGKILL,
+	}
+}
+
+// applySandboxSysProcAttrBatch is like applySandboxSysProcAttr but also sets
+// Setpgid so the child gets its own process group. This enables process-group
+// kill (-pid) for cancellation. Must NOT be used with PTY exec because
+// pty.Start sets Setsid which conflicts with Setpgid.
+func applySandboxSysProcAttrBatch(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
 		Setpgid:    true,
 		Pdeathsig:  syscall.SIGKILL,
 	}

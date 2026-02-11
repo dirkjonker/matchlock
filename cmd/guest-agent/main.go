@@ -204,7 +204,7 @@ func handleExecBatch(fd int, data []byte) {
 	}
 
 	applyUserEnv(cmd, req.User)
-	applySandboxSysProcAttr(cmd)
+	applySandboxSysProcAttrBatch(cmd)
 	wrapCommandForSandbox(cmd)
 	wipeMap(req.Env)
 
@@ -286,7 +286,7 @@ func handleExecStreamBatch(fd int, data []byte) {
 
 	applyUserEnv(cmd, req.User)
 
-	applySandboxSysProcAttr(cmd)
+	applySandboxSysProcAttrBatch(cmd)
 	wrapCommandForSandbox(cmd)
 	wipeMap(req.Env)
 
