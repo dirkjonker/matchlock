@@ -273,6 +273,15 @@ func applySandboxSysProcAttr(cmd *exec.Cmd) {
 	}
 }
 
+// applySandboxSysProcAttrBatch is like applySandboxSysProcAttr but also sets
+// Setpgid so the child gets its own process group. This enables process-group
+// kill (-pid) for cancellation. Must NOT be used with PTY exec because
+// pty.Start sets Setsid which conflicts with Setpgid.
+func applySandboxSysProcAttrBatch(cmd *exec.Cmd) {
+	applySandboxSysProcAttr(cmd)
+	cmd.SysProcAttr.Setpgid = true
+}
+
 // wrapCommandForSandbox rewrites the exec.Cmd to use the re-exec launcher pattern.
 // The original command is passed via environment variables, and the binary is
 // replaced with /proc/self/exe (the guest-agent itself).

@@ -23,6 +23,8 @@ import (
 )
 
 const (
+	cancelGracePeriod = 5 * time.Second
+
 	AF_VSOCK        = 40
 	VMADDR_CID_HOST = 2
 
@@ -143,6 +145,40 @@ func serveExec() {
 	}
 }
 
+// monitorVsockCancel monitors the vsock fd for EOF (host closed the connection
+// due to cancellation) and gracefully terminates the child process using
+// process-group kill: SIGTERM → cancelGracePeriod → SIGKILL.
+//
+// Returns a channel that the caller MUST close after cmd.Wait() returns to
+// prevent signals being sent to a recycled PID.
+func monitorVsockCancel(fd int, cmd *exec.Cmd) chan struct{} {
+	waitDone := make(chan struct{})
+	go func() {
+		buf := make([]byte, 1)
+		syscall.Read(fd, buf)
+		select {
+		case <-waitDone:
+			return
+		default:
+		}
+		pid := cmd.Process.Pid
+		syscall.Kill(-pid, syscall.SIGTERM)
+		timer := time.AfterFunc(cancelGracePeriod, func() {
+			select {
+			case <-waitDone:
+				return
+			default:
+			}
+			syscall.Kill(-pid, syscall.SIGKILL)
+		})
+		go func() {
+			<-waitDone
+			timer.Stop()
+		}()
+	}()
+	return waitDone
+}
+
 func handleExec(fd int) {
 	// Read message header (type + length)
 	header := make([]byte, 5)
@@ -182,10 +218,8 @@ func handleExecBatch(fd int, data []byte) {
 		return
 	}
 
-	// Wipe the raw request data from memory now that it's been deserialized
 	wipeBytes(data)
 
-	// Execute command
 	var stdout, stderr bytes.Buffer
 	cmd := exec.Command("sh", "-c", req.Command)
 	cmd.Stdout = &stdout
@@ -204,15 +238,19 @@ func handleExecBatch(fd int, data []byte) {
 	}
 
 	applyUserEnv(cmd, req.User)
-
-	// Apply sandbox isolation: PID namespace + seccomp + cap drop via re-exec
-	applySandboxSysProcAttr(cmd)
+	applySandboxSysProcAttrBatch(cmd)
 	wrapCommandForSandbox(cmd)
-
-	// Wipe the request's env map from memory before running
 	wipeMap(req.Env)
 
-	err := cmd.Run()
+	if err := cmd.Start(); err != nil {
+		sendExecResponse(fd, &ExecResponse{ExitCode: 1, Error: err.Error()})
+		return
+	}
+
+	waitDone := monitorVsockCancel(fd, cmd)
+
+	err := cmd.Wait()
+	close(waitDone)
 
 	resp := &ExecResponse{
 		Stdout: stdout.Bytes(),
@@ -269,7 +307,7 @@ func handleExecStreamBatch(fd int, data []byte) {
 
 	applyUserEnv(cmd, req.User)
 
-	applySandboxSysProcAttr(cmd)
+	applySandboxSysProcAttrBatch(cmd)
 	wrapCommandForSandbox(cmd)
 	wipeMap(req.Env)
 
@@ -277,6 +315,8 @@ func handleExecStreamBatch(fd int, data []byte) {
 		sendExecResponse(fd, &ExecResponse{ExitCode: 1, Error: err.Error()})
 		return
 	}
+
+	waitDone := monitorVsockCancel(fd, cmd)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -311,6 +351,7 @@ func handleExecStreamBatch(fd int, data []byte) {
 
 	wg.Wait()
 	cmdErr := cmd.Wait()
+	close(waitDone)
 
 	resp := &ExecResponse{}
 	if cmdErr != nil {
