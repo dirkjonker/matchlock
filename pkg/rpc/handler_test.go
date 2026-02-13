@@ -57,12 +57,14 @@ type testRPC struct {
 }
 
 func newTestRPC(vm *mockVM) *testRPC {
+	return newTestRPCWithFactory(func(ctx context.Context, config *api.Config) (VM, error) {
+		return vm, nil
+	})
+}
+
+func newTestRPCWithFactory(factory VMFactory) *testRPC {
 	stdinR, stdinW := io.Pipe()
 	stdoutR, stdoutW := io.Pipe()
-
-	factory := func(ctx context.Context, config *api.Config) (VM, error) {
-		return vm, nil
-	}
 
 	h := NewHandler(factory, stdinR, stdoutW)
 
@@ -218,4 +220,41 @@ func TestHandlerExecStream(t *testing.T) {
 	json.Unmarshal(final.Result, &result)
 	assert.Equal(t, 0, result.ExitCode)
 	assert.Equal(t, int64(42), result.DurationMS)
+}
+
+func TestHandlerCreateRejectsMountOutsideWorkspace(t *testing.T) {
+	vm := &mockVM{id: "vm-test"}
+	factoryCalls := 0
+
+	rpc := newTestRPCWithFactory(func(ctx context.Context, config *api.Config) (VM, error) {
+		factoryCalls++
+		return vm, nil
+	})
+	defer rpc.close()
+
+	rpc.send("create", 1, map[string]interface{}{
+		"image": "alpine:latest",
+		"vfs": map[string]interface{}{
+			"workspace": "/workspace/project",
+			"mounts": map[string]interface{}{
+				"/workspace": map[string]interface{}{
+					"type": "memory",
+				},
+			},
+		},
+	})
+
+	msg := rpc.read()
+	if msg.Error == nil {
+		t.Fatal("expected create to fail for mount outside workspace")
+	}
+	if msg.Error.Code != ErrCodeInvalidParams {
+		t.Fatalf("error code = %d, want %d", msg.Error.Code, ErrCodeInvalidParams)
+	}
+	if !strings.Contains(msg.Error.Message, "must be within workspace") {
+		t.Fatalf("error = %q, want to contain %q", msg.Error.Message, "must be within workspace")
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("factory called %d times, want 0", factoryCalls)
+	}
 }
