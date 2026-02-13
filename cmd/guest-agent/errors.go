@@ -13,8 +13,8 @@ var (
 	ErrEOF     = errors.New("EOF")
 
 	// User resolution errors
-	ErrResolveUID   = errors.New("resolve uid")
-	ErrResolveGID   = errors.New("resolve gid")
+	ErrResolveUID    = errors.New("resolve uid")
+	ErrResolveGID    = errors.New("resolve gid")
 	ErrUserNotFound  = errors.New("user not found")
 	ErrGroupNotFound = errors.New("group not found")
 )

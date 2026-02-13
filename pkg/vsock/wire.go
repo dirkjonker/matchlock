@@ -14,10 +14,11 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"fmt"
+
 	"net"
 	"time"
 
+	"github.com/jingkaihe/matchlock/internal/errx"
 	"github.com/jingkaihe/matchlock/pkg/api"
 )
 
@@ -70,7 +71,7 @@ func ExecPipe(ctx context.Context, conn net.Conn, command string, opts *api.Exec
 
 	reqData, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrEncodeExecRequest, err)
+		return nil, errx.Wrap(ErrEncodeExecRequest, err)
 	}
 
 	header := make([]byte, 5)
@@ -81,13 +82,13 @@ func ExecPipe(ctx context.Context, conn net.Conn, command string, opts *api.Exec
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("%w: %w", ErrWriteHeader, err)
+		return nil, errx.Wrap(ErrWriteHeader, err)
 	}
 	if _, err := conn.Write(reqData); err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("%w: %w", ErrWriteRequest, err)
+		return nil, errx.Wrap(ErrWriteRequest, err)
 	}
 
 	done := make(chan *api.ExecResult, 1)
@@ -135,7 +136,7 @@ func ExecPipe(ctx context.Context, conn net.Conn, command string, opts *api.Exec
 				if ctx.Err() != nil {
 					errCh <- ctx.Err()
 				} else {
-					errCh <- fmt.Errorf("%w: %w", ErrReadResponseHeader, err)
+					errCh <- errx.Wrap(ErrReadResponseHeader, err)
 				}
 				return
 			}
@@ -149,7 +150,7 @@ func ExecPipe(ctx context.Context, conn net.Conn, command string, opts *api.Exec
 					if ctx.Err() != nil {
 						errCh <- ctx.Err()
 					} else {
-						errCh <- fmt.Errorf("%w: %w", ErrReadResponseData, err)
+						errCh <- errx.Wrap(ErrReadResponseData, err)
 					}
 					return
 				}

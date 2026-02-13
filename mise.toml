@@ -120,13 +120,26 @@ run = "go vet ./..."
 description = "Run golangci-lint"
 run = "golangci-lint run"
 
+[tasks."check:errx"]
+description = "Ensure sentinel wrapping uses internal/errx helpers"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+if rg -n --glob '*.go' --glob '!internal/errx/errx.go' 'fmt\\.Errorf\\(\\s*"%w' .; then
+  echo ""
+  echo "Found direct %w-prefixed fmt.Errorf usage; use errx.Wrap/errx.With instead."
+  exit 1
+fi
+"""
+
 [tasks.tidy]
 description = "Run go mod tidy"
 run = "go mod tidy"
 
 [tasks.check]
 description = "Run all checks (fmt, vet, lint, test)"
-depends = ["fmt", "vet", "lint", "test"]
+depends = ["fmt", "vet", "lint", "test", "check:errx"]
 
 # =============================================================================
 # Kernel tasks

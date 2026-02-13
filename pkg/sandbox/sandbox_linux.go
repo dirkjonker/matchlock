@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/google/uuid"
+	"github.com/jingkaihe/matchlock/internal/errx"
 	"github.com/jingkaihe/matchlock/pkg/api"
 	sandboxnet "github.com/jingkaihe/matchlock/pkg/net"
 	"github.com/jingkaihe/matchlock/pkg/policy"
@@ -70,14 +71,14 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 
 	stateMgr := state.NewManager()
 	if err := stateMgr.Register(id, config); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrRegisterState, err)
+		return nil, errx.Wrap(ErrRegisterState, err)
 	}
 
 	// Create a copy of the rootfs for this VM (copy-on-write if supported)
 	vmRootfsPath := stateMgr.Dir(id) + "/rootfs.ext4"
 	if err := copyRootfs(opts.RootfsPath, vmRootfsPath); err != nil {
 		stateMgr.Unregister(id)
-		return nil, fmt.Errorf("%w: %w", ErrCopyRootfs, err)
+		return nil, errx.Wrap(ErrCopyRootfs, err)
 	}
 
 	// Inject matchlock components (guest-agent, guest-fused, init, DNS) and resize
@@ -88,7 +89,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 	if err := prepareRootfs(vmRootfsPath, diskSizeMB); err != nil {
 		os.Remove(vmRootfsPath)
 		stateMgr.Unregister(id)
-		return nil, fmt.Errorf("%w: %w", ErrPrepareRootfs, err)
+		return nil, errx.Wrap(ErrPrepareRootfs, err)
 	}
 
 	// Create CAPool early and inject cert into rootfs before VM creation
@@ -100,12 +101,12 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 		if err != nil {
 			os.Remove(vmRootfsPath)
 			stateMgr.Unregister(id)
-			return nil, fmt.Errorf("%w: %w", ErrCreateCAPool, err)
+			return nil, errx.Wrap(ErrCreateCAPool, err)
 		}
 		if err := injectConfigFileIntoRootfs(vmRootfsPath, "/etc/ssl/certs/matchlock-ca.crt", caPool.CACertPEM()); err != nil {
 			os.Remove(vmRootfsPath)
 			stateMgr.Unregister(id)
-			return nil, fmt.Errorf("%w: %w", ErrInjectCACert, err)
+			return nil, errx.Wrap(ErrInjectCACert, err)
 		}
 	}
 
@@ -115,7 +116,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 	if err != nil {
 		os.Remove(vmRootfsPath)
 		stateMgr.Unregister(id)
-		return nil, fmt.Errorf("%w: %w", ErrAllocateSubnet, err)
+		return nil, errx.Wrap(ErrAllocateSubnet, err)
 	}
 
 	backend := linux.NewLinuxBackend()
@@ -130,7 +131,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 		if err := api.ValidateGuestMount(d.GuestMount); err != nil {
 			subnetAlloc.Release(id)
 			stateMgr.Unregister(id)
-			return nil, fmt.Errorf("%w: %w", ErrInvalidDiskCfg, err)
+			return nil, errx.Wrap(ErrInvalidDiskCfg, err)
 		}
 		extraDisks = append(extraDisks, vm.DiskConfig{
 			HostPath:   d.HostPath,
@@ -162,7 +163,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 	if err != nil {
 		subnetAlloc.Release(id)
 		stateMgr.Unregister(id)
-		return nil, fmt.Errorf("%w: %w", ErrCreateVM, err)
+		return nil, errx.Wrap(ErrCreateVM, err)
 	}
 
 	linuxMachine := machine.(*linux.LinuxMachine)
@@ -210,7 +211,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 			machine.Close(ctx)
 			subnetAlloc.Release(id)
 			stateMgr.Unregister(id)
-			return nil, fmt.Errorf("%w: %w", ErrCreateProxy, err)
+			return nil, errx.Wrap(ErrCreateProxy, err)
 		}
 
 		proxy.Start()
@@ -221,7 +222,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 			machine.Close(ctx)
 			subnetAlloc.Release(id)
 			stateMgr.Unregister(id)
-			return nil, fmt.Errorf("%w: %w", ErrFirewallSetup, err)
+			return nil, errx.Wrap(ErrFirewallSetup, err)
 		}
 	}
 
@@ -252,7 +253,7 @@ func New(ctx context.Context, config *api.Config, opts *Options) (*Sandbox, erro
 		machine.Close(ctx)
 		subnetAlloc.Release(id)
 		stateMgr.Unregister(id)
-		return nil, fmt.Errorf("%w: %w", ErrVFSServer, err)
+		return nil, errx.Wrap(ErrVFSServer, err)
 	}
 
 	return &Sandbox{
@@ -342,12 +343,12 @@ func (s *Sandbox) Close(ctx context.Context) error {
 	}
 	if s.fwRules != nil {
 		if err := s.fwRules.Cleanup(); err != nil {
-			errs = append(errs, fmt.Errorf("%w: %w", ErrFirewallCleanup, err))
+			errs = append(errs, errx.Wrap(ErrFirewallCleanup, err))
 		}
 	}
 	if s.natRules != nil {
 		if err := s.natRules.Cleanup(); err != nil {
-			errs = append(errs, fmt.Errorf("%w: %w", ErrNATCleanup, err))
+			errs = append(errs, errx.Wrap(ErrNATCleanup, err))
 		}
 	}
 	if s.proxy != nil {
@@ -362,7 +363,7 @@ func (s *Sandbox) Close(ctx context.Context) error {
 	close(s.events)
 	s.stateMgr.Unregister(s.id)
 	if err := s.machine.Close(ctx); err != nil {
-		errs = append(errs, fmt.Errorf("%w: %w", ErrMachineClose, err))
+		errs = append(errs, errx.Wrap(ErrMachineClose, err))
 	}
 
 	// Remove rootfs copy to save disk space
@@ -407,13 +408,13 @@ func createProvider(mount api.MountConfig) vfs.Provider {
 func copyRootfs(src, dst string) error {
 	srcFile, err := os.Open(src)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrOpenSource, err)
+		return errx.Wrap(ErrOpenSource, err)
 	}
 	defer srcFile.Close()
 
 	dstFile, err := os.Create(dst)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrCreateDest, err)
+		return errx.Wrap(ErrCreateDest, err)
 	}
 	defer dstFile.Close()
 
@@ -428,7 +429,7 @@ func copyRootfs(src, dst string) error {
 	fmt.Fprintf(os.Stderr, "Note: copy-on-write not supported (%v), using regular copy\n", err)
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
 		os.Remove(dst)
-		return fmt.Errorf("%w: %w", ErrCopy, err)
+		return errx.Wrap(ErrCopy, err)
 	}
 
 	return nil

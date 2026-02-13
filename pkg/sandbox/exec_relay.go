@@ -10,6 +10,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/jingkaihe/matchlock/internal/errx"
 	"github.com/jingkaihe/matchlock/pkg/api"
 	"github.com/jingkaihe/matchlock/pkg/vm"
 )
@@ -63,7 +64,7 @@ func (r *ExecRelay) Start(socketPath string) error {
 	os.Remove(socketPath)
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
-		return fmt.Errorf("%w %s: %w", ErrRelayListen, socketPath, err)
+		return errx.With(ErrRelayListen, " %s: %w", socketPath, err)
 	}
 	r.listener = listener
 
@@ -322,7 +323,7 @@ func sendRelayResult(conn net.Conn, result *relayExecResult) {
 func ExecViaRelay(ctx context.Context, socketPath, command, workingDir, user string) (*api.ExecResult, error) {
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrRelayConnect, err)
+		return nil, errx.Wrap(ErrRelayConnect, err)
 	}
 	defer conn.Close()
 
@@ -343,7 +344,7 @@ func ExecViaRelay(ctx context.Context, socketPath, command, workingDir, user str
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("%w: %w", ErrRelaySend, err)
+		return nil, errx.Wrap(ErrRelaySend, err)
 	}
 
 	msgType, data, err := readRelayMsg(conn)
@@ -351,16 +352,16 @@ func ExecViaRelay(ctx context.Context, socketPath, command, workingDir, user str
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("%w: %w", ErrRelayRead, err)
+		return nil, errx.Wrap(ErrRelayRead, err)
 	}
 
 	if msgType != relayMsgExecResult {
-		return nil, fmt.Errorf("%w: %d", ErrRelayUnexpected, msgType)
+		return nil, errx.With(ErrRelayUnexpected, ": %d", msgType)
 	}
 
 	var result relayExecResult
 	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrRelayDecode, err)
+		return nil, errx.Wrap(ErrRelayDecode, err)
 	}
 
 	if result.Error != "" {
@@ -382,7 +383,7 @@ func ExecViaRelay(ctx context.Context, socketPath, command, workingDir, user str
 func ExecInteractiveViaRelay(ctx context.Context, socketPath, command, workingDir, user string, rows, cols uint16, stdin io.Reader, stdout io.Writer) (int, error) {
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		return 1, fmt.Errorf("%w: %w", ErrRelayConnect, err)
+		return 1, errx.Wrap(ErrRelayConnect, err)
 	}
 	defer conn.Close()
 
@@ -395,7 +396,7 @@ func ExecInteractiveViaRelay(ctx context.Context, socketPath, command, workingDi
 	}
 	reqData, _ := json.Marshal(req)
 	if err := sendRelayMsg(conn, relayMsgExecInteractive, reqData); err != nil {
-		return 1, fmt.Errorf("%w: %w", ErrRelaySend, err)
+		return 1, errx.Wrap(ErrRelaySend, err)
 	}
 
 	done := make(chan int, 1)
@@ -452,14 +453,14 @@ func ExecInteractiveViaRelay(ctx context.Context, socketPath, command, workingDi
 func ExecPipeViaRelay(ctx context.Context, socketPath, command, workingDir, user string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		return 1, fmt.Errorf("%w: %w", ErrRelayConnect, err)
+		return 1, errx.Wrap(ErrRelayConnect, err)
 	}
 	defer conn.Close()
 
 	req := relayExecRequest{Command: command, WorkingDir: workingDir, User: user}
 	reqData, _ := json.Marshal(req)
 	if err := sendRelayMsg(conn, relayMsgExecPipe, reqData); err != nil {
-		return 1, fmt.Errorf("%w: %w", ErrRelaySend, err)
+		return 1, errx.Wrap(ErrRelaySend, err)
 	}
 
 	done := make(chan int, 1)

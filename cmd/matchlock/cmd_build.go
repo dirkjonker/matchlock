@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/sys/unix"
 
+	"github.com/jingkaihe/matchlock/internal/errx"
 	"github.com/jingkaihe/matchlock/pkg/api"
 	"github.com/jingkaihe/matchlock/pkg/image"
 	"github.com/jingkaihe/matchlock/pkg/sandbox"
@@ -61,11 +62,11 @@ func runBuild(cmd *cobra.Command, args []string) error {
 func buildCachePath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrGetHomeDir, err)
+		return "", errx.Wrap(ErrGetHomeDir, err)
 	}
 	cacheDir := filepath.Join(home, ".cache", "matchlock", "buildkit")
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
-		return "", fmt.Errorf("%w: %w", ErrCreateCacheDir, err)
+		return "", errx.Wrap(ErrCreateCacheDir, err)
 	}
 	return filepath.Join(cacheDir, "cache.ext4"), nil
 }
@@ -89,12 +90,12 @@ func ensureBuildCacheImage(cachePath string, sizeMB int) error {
 
 	f, err := os.Create(cachePath)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrCreateCacheImage, err)
+		return errx.Wrap(ErrCreateCacheImage, err)
 	}
 	if err := f.Truncate(targetBytes); err != nil {
 		f.Close()
 		os.Remove(cachePath)
-		return fmt.Errorf("%w: %w", ErrTruncateCacheImage, err)
+		return errx.Wrap(ErrTruncateCacheImage, err)
 	}
 	f.Close()
 
@@ -112,7 +113,7 @@ func growExt4Image(path string, targetBytes int64) error {
 	fmt.Fprintf(os.Stderr, "Growing build cache to %d MB...\n", targetBytes/(1024*1024))
 
 	if err := os.Truncate(path, targetBytes); err != nil {
-		return fmt.Errorf("%w: %w", ErrTruncateCacheImage, err)
+		return errx.Wrap(ErrTruncateCacheImage, err)
 	}
 
 	if e2fsck, err := exec.LookPath("e2fsck"); err == nil {
@@ -139,7 +140,7 @@ func lockBuildCache(cachePath string) (*os.File, error) {
 	lockPath := cachePath + ".lock"
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrOpenLockFile, err)
+		return nil, errx.Wrap(ErrOpenLockFile, err)
 	}
 
 	// Try non-blocking lock first to avoid noisy message when uncontended.
@@ -147,7 +148,7 @@ func lockBuildCache(cachePath string) (*os.File, error) {
 		fmt.Fprintf(os.Stderr, "Waiting for build cache lock (another build is running)...\n")
 		if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
 			f.Close()
-			return nil, fmt.Errorf("%w: %w", ErrAcquireLock, err)
+			return nil, errx.Wrap(ErrAcquireLock, err)
 		}
 	}
 
@@ -172,14 +173,14 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 	if memory == 0 {
 		mem, err := totalMemoryMB()
 		if err != nil {
-			return fmt.Errorf("%w: %w (use --build-memory to set explicitly)", ErrAutoDetectMemory, err)
+			return errx.With(ErrAutoDetectMemory, ": %w (use --build-memory to set explicitly)", err)
 		}
 		memory = mem
 	}
 
 	absContext, err := filepath.Abs(contextDir)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrResolveContextDir, err)
+		return errx.Wrap(ErrResolveContextDir, err)
 	}
 	if info, err := os.Stat(absContext); err != nil || !info.IsDir() {
 		return fmt.Errorf("build context %q is not a directory", contextDir)
@@ -187,7 +188,7 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 
 	absDockerfile, err := filepath.Abs(dockerfile)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrResolveDockerfile, err)
+		return errx.Wrap(ErrResolveDockerfile, err)
 	}
 	if _, err := os.Stat(absDockerfile); err != nil {
 		return fmt.Errorf("Dockerfile not found: %s", dockerfile)
@@ -203,7 +204,7 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 	builder := image.NewBuilder(&image.BuildOptions{})
 	buildResult, err := builder.Build(ctx, buildkitImage)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrBuildBuildKitRootfs, err)
+		return errx.Wrap(ErrBuildBuildKitRootfs, err)
 	}
 
 	dockerfileName := filepath.Base(absDockerfile)
@@ -212,13 +213,13 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 
 	workspaceDir, err := os.MkdirTemp("", "matchlock-build-workspace-*")
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrCreateWorkspaceDir, err)
+		return errx.Wrap(ErrCreateWorkspaceDir, err)
 	}
 	defer os.RemoveAll(workspaceDir)
 
 	outputDir, err := os.MkdirTemp("", "matchlock-build-output-*")
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrCreateOutputDir, err)
+		return errx.Wrap(ErrCreateOutputDir, err)
 	}
 	defer os.RemoveAll(outputDir)
 
@@ -238,15 +239,15 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 	if !noCache {
 		cachePath, err := buildCachePath()
 		if err != nil {
-			return fmt.Errorf("%w: %w", ErrResolveCachePath, err)
+			return errx.Wrap(ErrResolveCachePath, err)
 		}
 		lockFile, err := lockBuildCache(cachePath)
 		if err != nil {
-			return fmt.Errorf("%w: %w", ErrLockBuildCache, err)
+			return errx.Wrap(ErrLockBuildCache, err)
 		}
 		defer lockFile.Close()
 		if err := ensureBuildCacheImage(cachePath, buildCacheSize); err != nil {
-			return fmt.Errorf("%w: %w", ErrPrepareBuildCache, err)
+			return errx.Wrap(ErrPrepareBuildCache, err)
 		}
 		extraDisks = append(extraDisks, api.DiskMount{
 			HostPath:   cachePath,
@@ -275,7 +276,7 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 	sandboxOpts := &sandbox.Options{RootfsPath: buildResult.RootfsPath}
 	sb, err := sandbox.New(ctx, config, sandboxOpts)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrCreateBuildSandbox, err)
+		return errx.Wrap(ErrCreateBuildSandbox, err)
 	}
 	defer func() {
 		closeCtx, cancel := context.WithTimeout(context.Background(), api.DefaultGracefulShutdownPeriod)
@@ -284,7 +285,7 @@ func runDockerfileBuild(cmd *cobra.Command, contextDir, dockerfile, tag string) 
 	}()
 
 	if err := sb.Start(ctx); err != nil {
-		return fmt.Errorf("%w: %w", ErrStartBuildSandbox, err)
+		return errx.Wrap(ErrStartBuildSandbox, err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Starting BuildKit daemon and building image from %s...\n", dockerfile)
@@ -335,12 +336,12 @@ exit $RC
 `, guestDockerfileDir, filenameOpt, noCacheOpt)
 
 	if err := sb.WriteFile(ctx, "/workspace/buildkit-run.sh", []byte(buildScript), 0755); err != nil {
-		return fmt.Errorf("%w: %w", ErrWriteBuildScript, err)
+		return errx.Wrap(ErrWriteBuildScript, err)
 	}
 
 	result, execErr := sb.Exec(ctx, "/workspace/buildkit-run.sh", execOpts)
 	if execErr != nil {
-		return fmt.Errorf("%w: %w", ErrBuildKitBuild, execErr)
+		return errx.Wrap(ErrBuildKitBuild, execErr)
 	}
 	if result.ExitCode != 0 {
 		return fmt.Errorf("BuildKit build failed (exit %d)", result.ExitCode)
@@ -351,13 +352,13 @@ exit $RC
 	tarballPath := filepath.Join(outputDir, "image.tar")
 	importFile, err := os.Open(tarballPath)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrOpenImageTarball, err)
+		return errx.Wrap(ErrOpenImageTarball, err)
 	}
 	defer importFile.Close()
 
 	importResult, err := builder.Import(ctx, importFile, tag)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrImportImage, err)
+		return errx.Wrap(ErrImportImage, err)
 	}
 
 	fmt.Printf("Successfully built and tagged %s\n", tag)

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/Code-Hex/vz/v3"
+	"github.com/jingkaihe/matchlock/internal/errx"
 	"github.com/jingkaihe/matchlock/pkg/vm"
 )
 
@@ -32,10 +33,10 @@ func (b *DarwinBackend) Name() string {
 func (b *DarwinBackend) Create(ctx context.Context, config *vm.VMConfig) (vm.Machine, error) {
 	// Verify files exist
 	if _, err := os.Stat(config.KernelPath); err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", ErrKernelNotFound, config.KernelPath, err)
+		return nil, errx.With(ErrKernelNotFound, ": %s: %w", config.KernelPath, err)
 	}
 	if _, err := os.Stat(config.RootfsPath); err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", ErrRootfsNotFound, config.RootfsPath, err)
+		return nil, errx.With(ErrRootfsNotFound, ": %s: %w", config.RootfsPath, err)
 	}
 
 	// Copy rootfs to temp file so each VM gets a clean image
@@ -46,14 +47,14 @@ func (b *DarwinBackend) Create(ctx context.Context, config *vm.VMConfig) (vm.Mac
 		var err error
 		tempRootfs, err = CopyRootfsToTemp(config.RootfsPath)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrCopyRootfs, err)
+			return nil, errx.Wrap(ErrCopyRootfs, err)
 		}
 	}
 
 	socketPair, err := createSocketPair()
 	if err != nil {
 		os.Remove(tempRootfs)
-		return nil, fmt.Errorf("%w: %w", ErrSocketPair, err)
+		return nil, errx.Wrap(ErrSocketPair, err)
 	}
 
 	kernelArgs := b.buildKernelArgs(config)
@@ -65,7 +66,7 @@ func (b *DarwinBackend) Create(ctx context.Context, config *vm.VMConfig) (vm.Mac
 		if _, err := os.Stat(config.InitramfsPath); err != nil {
 			os.Remove(tempRootfs)
 			socketPair.Close()
-			return nil, fmt.Errorf("%w: %s: %w", ErrInitramfsNotFound, config.InitramfsPath, err)
+			return nil, errx.With(ErrInitramfsNotFound, ": %s: %w", config.InitramfsPath, err)
 		}
 		bootLoaderOpts = append(bootLoaderOpts, vz.WithInitrd(config.InitramfsPath))
 	}
@@ -77,7 +78,7 @@ func (b *DarwinBackend) Create(ctx context.Context, config *vm.VMConfig) (vm.Mac
 	if err != nil {
 		os.Remove(tempRootfs)
 		socketPair.Close()
-		return nil, fmt.Errorf("%w: %w", ErrBootLoader, err)
+		return nil, errx.Wrap(ErrBootLoader, err)
 	}
 
 	vzConfig, err := vz.NewVirtualMachineConfiguration(
@@ -88,7 +89,7 @@ func (b *DarwinBackend) Create(ctx context.Context, config *vm.VMConfig) (vm.Mac
 	if err != nil {
 		os.Remove(tempRootfs)
 		socketPair.Close()
-		return nil, fmt.Errorf("%w: %w", ErrVMConfig, err)
+		return nil, errx.Wrap(ErrVMConfig, err)
 	}
 
 	configWithRootfs := *config
@@ -96,20 +97,20 @@ func (b *DarwinBackend) Create(ctx context.Context, config *vm.VMConfig) (vm.Mac
 	if err := b.configureStorage(vzConfig, &configWithRootfs); err != nil {
 		os.Remove(tempRootfs)
 		socketPair.Close()
-		return nil, fmt.Errorf("%w: %w", ErrStorageConfig, err)
+		return nil, errx.Wrap(ErrStorageConfig, err)
 	}
 
 	if err := b.configureNetwork(vzConfig, socketPair, config.UseInterception); err != nil {
 		os.Remove(tempRootfs)
 		socketPair.Close()
-		return nil, fmt.Errorf("%w: %w", ErrNetworkConfig, err)
+		return nil, errx.Wrap(ErrNetworkConfig, err)
 	}
 
 	vsockConfig, err := vz.NewVirtioSocketDeviceConfiguration()
 	if err != nil {
 		os.Remove(tempRootfs)
 		socketPair.Close()
-		return nil, fmt.Errorf("%w: %w", ErrVsockConfig, err)
+		return nil, errx.Wrap(ErrVsockConfig, err)
 	}
 	vzConfig.SetSocketDevicesVirtualMachineConfiguration([]vz.SocketDeviceConfiguration{vsockConfig})
 
@@ -118,28 +119,28 @@ func (b *DarwinBackend) Create(ctx context.Context, config *vm.VMConfig) (vm.Mac
 	if err != nil {
 		os.Remove(tempRootfs)
 		socketPair.Close()
-		return nil, fmt.Errorf("%w: %w", ErrEntropyConfig, err)
+		return nil, errx.Wrap(ErrEntropyConfig, err)
 	}
 	vzConfig.SetEntropyDevicesVirtualMachineConfiguration([]*vz.VirtioEntropyDeviceConfiguration{entropyConfig})
 
 	if err := b.configureConsole(vzConfig, config); err != nil {
 		os.Remove(tempRootfs)
 		socketPair.Close()
-		return nil, fmt.Errorf("%w: %w", ErrConsoleConfig, err)
+		return nil, errx.Wrap(ErrConsoleConfig, err)
 	}
 
 	validated, err := vzConfig.Validate()
 	if err != nil || !validated {
 		os.Remove(tempRootfs)
 		socketPair.Close()
-		return nil, fmt.Errorf("%w: validated=%v: %w", ErrVMConfigInvalid, validated, err)
+		return nil, errx.With(ErrVMConfigInvalid, ": validated=%v: %w", validated, err)
 	}
 
 	vzVM, err := vz.NewVirtualMachine(vzConfig)
 	if err != nil {
 		os.Remove(tempRootfs)
 		socketPair.Close()
-		return nil, fmt.Errorf("%w: %w", ErrVMCreate, err)
+		return nil, errx.Wrap(ErrVMCreate, err)
 	}
 
 	return &DarwinMachine{
@@ -202,12 +203,12 @@ func (b *DarwinBackend) configureStorage(vzConfig *vz.VirtualMachineConfiguratio
 		vz.DiskImageSynchronizationModeFsync,
 	)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrDiskAttachment, err)
+		return errx.Wrap(ErrDiskAttachment, err)
 	}
 
 	storageConfig, err := vz.NewVirtioBlockDeviceConfiguration(diskAttachment)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrStorageConfig, err)
+		return errx.Wrap(ErrStorageConfig, err)
 	}
 
 	devices := []vz.StorageDeviceConfiguration{storageConfig}
@@ -220,12 +221,12 @@ func (b *DarwinBackend) configureStorage(vzConfig *vz.VirtualMachineConfiguratio
 			vz.DiskImageSynchronizationModeFsync,
 		)
 		if err != nil {
-			return fmt.Errorf("%w: disk %d: %w", ErrExtraDiskAttach, i, err)
+			return errx.With(ErrExtraDiskAttach, ": disk %d: %w", i, err)
 		}
 
 		extraConfig, err := vz.NewVirtioBlockDeviceConfiguration(extraAttachment)
 		if err != nil {
-			return fmt.Errorf("%w: disk %d: %w", ErrExtraDiskConfig, i, err)
+			return errx.With(ErrExtraDiskConfig, ": disk %d: %w", i, err)
 		}
 
 		devices = append(devices, extraConfig)
@@ -278,24 +279,24 @@ func (b *DarwinBackend) configureNetwork(vzConfig *vz.VirtualMachineConfiguratio
 		// Use socket pair for traffic interception via gVisor stack
 		netAttachment, err = vz.NewFileHandleNetworkDeviceAttachment(socketPair.GuestFile())
 		if err != nil {
-			return fmt.Errorf("%w: %w", ErrFileHandleAttach, err)
+			return errx.Wrap(ErrFileHandleAttach, err)
 		}
 	} else {
 		// Use NAT for simple networking without interception
 		netAttachment, err = vz.NewNATNetworkDeviceAttachment()
 		if err != nil {
-			return fmt.Errorf("%w: %w", ErrNATAttach, err)
+			return errx.Wrap(ErrNATAttach, err)
 		}
 	}
 
 	netConfig, err := vz.NewVirtioNetworkDeviceConfiguration(netAttachment)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrNetworkConfig, err)
+		return errx.Wrap(ErrNetworkConfig, err)
 	}
 
 	mac, err := vz.NewRandomLocallyAdministeredMACAddress()
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrMACAddress, err)
+		return errx.Wrap(ErrMACAddress, err)
 	}
 	netConfig.SetMACAddress(mac)
 
@@ -309,25 +310,25 @@ func (b *DarwinBackend) configureConsole(vzConfig *vz.VirtualMachineConfiguratio
 	logPath := filepath.Join(home, ".cache", "matchlock", "console.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrConsoleLog, err)
+		return errx.Wrap(ErrConsoleLog, err)
 	}
 
 	nullRead, err := os.Open("/dev/null")
 	if err != nil {
 		logFile.Close()
-		return fmt.Errorf("%w: %w", ErrDevNull, err)
+		return errx.Wrap(ErrDevNull, err)
 	}
 
 	serialAttachment, err := vz.NewFileHandleSerialPortAttachment(nullRead, logFile)
 	if err != nil {
 		nullRead.Close()
 		logFile.Close()
-		return fmt.Errorf("%w: %w", ErrSerialAttach, err)
+		return errx.Wrap(ErrSerialAttach, err)
 	}
 
 	consoleConfig, err := vz.NewVirtioConsoleDeviceSerialPortConfiguration(serialAttachment)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrConsoleDevice, err)
+		return errx.Wrap(ErrConsoleDevice, err)
 	}
 
 	vzConfig.SetSerialPortsVirtualMachineConfiguration([]*vz.VirtioConsoleDeviceSerialPortConfiguration{consoleConfig})

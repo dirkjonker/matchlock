@@ -13,6 +13,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/uuid"
+	"github.com/jingkaihe/matchlock/internal/errx"
 )
 
 func (b *Builder) platformOptions() []remote.Option {
@@ -30,12 +31,12 @@ func (b *Builder) createExt4(sourceDir, destPath string, meta map[string]fileMet
 	// Check for mke2fs in PATH
 	mke2fsPath, err := exec.LookPath("mke2fs")
 	if err != nil {
-		return fmt.Errorf("%w: mke2fs not in PATH; install e2fsprogs: brew install e2fsprogs && brew link e2fsprogs", ErrToolNotFound)
+		return errx.With(ErrToolNotFound, ": mke2fs not in PATH; install e2fsprogs: brew install e2fsprogs && brew link e2fsprogs")
 	}
 
 	debugfsPath, err := exec.LookPath("debugfs")
 	if err != nil {
-		return fmt.Errorf("%w: debugfs not in PATH; install e2fsprogs: brew install e2fsprogs && brew link e2fsprogs", ErrToolNotFound)
+		return errx.With(ErrToolNotFound, ": debugfs not in PATH; install e2fsprogs: brew install e2fsprogs && brew link e2fsprogs")
 	}
 
 	// Calculate size (use Lstat-based walk to avoid following symlinks)
@@ -51,14 +52,14 @@ func (b *Builder) createExt4(sourceDir, destPath string, meta map[string]fileMet
 	cmd := exec.Command("dd", "if=/dev/zero", "of="+tmpPath, "bs=1M", fmt.Sprintf("count=%d", sizeMB), "conv=sparse")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		os.Remove(tmpPath)
-		return fmt.Errorf("%w: create sparse file: %w: %s", ErrCreateExt4, err, out)
+		return errx.With(ErrCreateExt4, ": create sparse file: %w: %s", err, out)
 	}
 
 	// Create ext4 filesystem
 	cmd = exec.Command(mke2fsPath, "-t", "ext4", "-F", "-q", tmpPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		os.Remove(tmpPath)
-		return fmt.Errorf("%w: mke2fs: %w: %s", ErrCreateExt4, err, out)
+		return errx.With(ErrCreateExt4, ": mke2fs: %w: %s", err, out)
 	}
 
 	// Build debugfs commands to copy all files
@@ -104,7 +105,7 @@ func (b *Builder) createExt4(sourceDir, destPath string, meta map[string]fileMet
 	})
 	if err != nil {
 		os.Remove(tmpPath)
-		return fmt.Errorf("%w: walk source dir: %w", ErrCreateExt4, err)
+		return errx.With(ErrCreateExt4, ": walk source dir: %w", err)
 	}
 
 	// Run debugfs to populate the filesystem
@@ -112,12 +113,12 @@ func (b *Builder) createExt4(sourceDir, destPath string, meta map[string]fileMet
 	cmd.Stdin = strings.NewReader(debugfsCommands.String())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		os.Remove(tmpPath)
-		return fmt.Errorf("%w: debugfs: %w: %s", ErrCreateExt4, err, out)
+		return errx.With(ErrCreateExt4, ": debugfs: %w: %s", err, out)
 	}
 
 	if err := os.Rename(tmpPath, destPath); err != nil {
 		os.Remove(tmpPath)
-		return fmt.Errorf("%w: rename: %w", ErrCreateExt4, err)
+		return errx.With(ErrCreateExt4, ": rename: %w", err)
 	}
 
 	return nil

@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jingkaihe/matchlock/internal/errx"
 	"github.com/jingkaihe/matchlock/pkg/api"
 	"github.com/jingkaihe/matchlock/pkg/image"
 	"github.com/jingkaihe/matchlock/pkg/rpc"
@@ -35,7 +36,7 @@ func runRPC(cmd *cobra.Command, args []string) error {
 
 		result, err := builder.Build(ctx, config.Image)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrBuildRootfs, err)
+			return nil, errx.Wrap(ErrBuildRootfs, err)
 		}
 
 		return sandbox.New(ctx, config, &sandbox.Options{RootfsPath: result.RootfsPath})

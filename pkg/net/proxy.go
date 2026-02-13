@@ -12,6 +12,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/jingkaihe/matchlock/internal/errx"
 	"github.com/jingkaihe/matchlock/pkg/api"
 	"github.com/jingkaihe/matchlock/pkg/policy"
 )
@@ -54,13 +55,13 @@ func NewTransparentProxy(cfg *ProxyConfig) (*TransparentProxy, error) {
 
 	httpLn, err := net.Listen("tcp", httpAddr)
 	if err != nil {
-		return nil, fmt.Errorf("%w on HTTP port %s: %w", ErrListen, httpAddr, err)
+		return nil, errx.With(ErrListen, " on HTTP port %s: %w", httpAddr, err)
 	}
 
 	httpsLn, err := net.Listen("tcp", httpsAddr)
 	if err != nil {
 		httpLn.Close()
-		return nil, fmt.Errorf("%w on HTTPS port %s: %w", ErrListen, httpsAddr, err)
+		return nil, errx.With(ErrListen, " on HTTPS port %s: %w", httpsAddr, err)
 	}
 
 	var passthroughLn net.Listener
@@ -70,7 +71,7 @@ func NewTransparentProxy(cfg *ProxyConfig) (*TransparentProxy, error) {
 		if err != nil {
 			httpLn.Close()
 			httpsLn.Close()
-			return nil, fmt.Errorf("%w on passthrough port %s: %w", ErrListen, ptAddr, err)
+			return nil, errx.With(ErrListen, " on passthrough port %s: %w", ptAddr, err)
 		}
 	}
 
@@ -231,7 +232,7 @@ type originalDst struct {
 func getOriginalDst(conn *net.TCPConn) (*originalDst, error) {
 	rawConn, err := conn.SyscallConn()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrSyscall, err)
+		return nil, errx.Wrap(ErrSyscall, err)
 	}
 
 	var origDst *originalDst
@@ -252,7 +253,7 @@ func getOriginalDst(conn *net.TCPConn) (*originalDst, error) {
 			0,
 		)
 		if errno != 0 {
-			controlErr = fmt.Errorf("%w: %w", ErrOriginalDst, errno)
+			controlErr = errx.Wrap(ErrOriginalDst, errno)
 			return
 		}
 

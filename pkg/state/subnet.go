@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/jingkaihe/matchlock/internal/errx"
 )
 
 // SubnetAllocator manages unique /24 subnet allocation for VMs
@@ -68,7 +70,7 @@ func (a *SubnetAllocator) Allocate(vmID string) (*SubnetInfo, error) {
 	}
 
 	if octet == 0 {
-		return nil, fmt.Errorf("%w (all %d-%d in use)", ErrNoAvailableSubnets, a.minOctet, a.maxOctet)
+		return nil, errx.With(ErrNoAvailableSubnets, " (all %d-%d in use)", a.minOctet, a.maxOctet)
 	}
 
 	info := &SubnetInfo{
@@ -82,7 +84,7 @@ func (a *SubnetAllocator) Allocate(vmID string) (*SubnetInfo, error) {
 	// Save allocation
 	data, _ := json.Marshal(info)
 	if err := os.WriteFile(filepath.Join(a.baseDir, vmID+".json"), data, 0644); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrSaveSubnetAllocation, err)
+		return nil, errx.Wrap(ErrSaveSubnetAllocation, err)
 	}
 
 	return info, nil

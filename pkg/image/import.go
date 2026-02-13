@@ -2,57 +2,59 @@ package image
 
 import (
 	"context"
-	"fmt"
+
 	"io"
 	"os"
 
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
+
+	"github.com/jingkaihe/matchlock/internal/errx"
 )
 
 func (b *Builder) Import(ctx context.Context, reader io.Reader, tag string) (*BuildResult, error) {
 	tmpTar, err := os.CreateTemp("", "matchlock-import-*.tar")
 	if err != nil {
-		return nil, fmt.Errorf("%w: tarball: %w", ErrCreateTemp, err)
+		return nil, errx.With(ErrCreateTemp, ": tarball: %w", err)
 	}
 	defer os.Remove(tmpTar.Name())
 
 	if _, err := io.Copy(tmpTar, reader); err != nil {
 		tmpTar.Close()
-		return nil, fmt.Errorf("%w: read: %w", ErrTarball, err)
+		return nil, errx.With(ErrTarball, ": read: %w", err)
 	}
 	tmpTar.Close()
 
 	img, err := tarball.ImageFromPath(tmpTar.Name(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: load image: %w", ErrTarball, err)
+		return nil, errx.With(ErrTarball, ": load image: %w", err)
 	}
 
 	digest, err := img.Digest()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrImageDigest, err)
+		return nil, errx.Wrap(ErrImageDigest, err)
 	}
 
 	extractDir, err := os.MkdirTemp("", "matchlock-extract-*")
 	if err != nil {
-		return nil, fmt.Errorf("%w: dir: %w", ErrCreateTemp, err)
+		return nil, errx.With(ErrCreateTemp, ": dir: %w", err)
 	}
 	defer os.RemoveAll(extractDir)
 
 	fileMetas, err := b.extractImage(img, extractDir)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrExtract, err)
+		return nil, errx.Wrap(ErrExtract, err)
 	}
 
 	rootfsTmp, err := os.CreateTemp("", "matchlock-rootfs-*.ext4")
 	if err != nil {
-		return nil, fmt.Errorf("%w: rootfs: %w", ErrCreateTemp, err)
+		return nil, errx.With(ErrCreateTemp, ": rootfs: %w", err)
 	}
 	rootfsTmp.Close()
 	rootfsPath := rootfsTmp.Name()
 
 	if err := b.createExt4(extractDir, rootfsPath, fileMetas); err != nil {
 		os.Remove(rootfsPath)
-		return nil, fmt.Errorf("%w: %w", ErrCreateExt4, err)
+		return nil, errx.Wrap(ErrCreateExt4, err)
 	}
 
 	ociConfig := extractOCIConfig(img)
@@ -64,7 +66,7 @@ func (b *Builder) Import(ctx context.Context, reader io.Reader, tag string) (*Bu
 	}
 	if err := b.store.Save(tag, rootfsPath, meta); err != nil {
 		os.Remove(rootfsPath)
-		return nil, fmt.Errorf("%w: %w", ErrStoreSave, err)
+		return nil, errx.Wrap(ErrStoreSave, err)
 	}
 	os.Remove(rootfsPath)
 

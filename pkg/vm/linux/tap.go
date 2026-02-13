@@ -8,6 +8,8 @@ import (
 	"os"
 	"syscall"
 	"unsafe"
+
+	"github.com/jingkaihe/matchlock/internal/errx"
 )
 
 const (
@@ -25,7 +27,7 @@ type ifreq struct {
 func CreateTAP(name string) (int, error) {
 	fd, err := syscall.Open(tunDevice, syscall.O_RDWR|syscall.O_CLOEXEC, 0)
 	if err != nil {
-		return 0, fmt.Errorf("%w: %w", ErrTUNOpen, err)
+		return 0, errx.Wrap(ErrTUNOpen, err)
 	}
 
 	var ifr ifreq
@@ -36,7 +38,7 @@ func CreateTAP(name string) (int, error) {
 		uintptr(syscall.TUNSETIFF), uintptr(unsafe.Pointer(&ifr)))
 	if errno != 0 {
 		syscall.Close(fd)
-		return 0, fmt.Errorf("%w: %w", ErrTUNSETIFF, errno)
+		return 0, errx.Wrap(ErrTUNSETIFF, errno)
 	}
 
 	// Make the TAP device persistent so it survives FD close
@@ -44,7 +46,7 @@ func CreateTAP(name string) (int, error) {
 		uintptr(TUNSETPERSIST), 1)
 	if errno != 0 {
 		syscall.Close(fd)
-		return 0, fmt.Errorf("%w: %w", ErrTUNSETPERSIST, errno)
+		return 0, errx.Wrap(ErrTUNSETPERSIST, errno)
 	}
 
 	return fd, nil
@@ -53,17 +55,17 @@ func CreateTAP(name string) (int, error) {
 func ConfigureInterface(name, cidr string) error {
 	iface, err := net.InterfaceByName(name)
 	if err != nil {
-		return fmt.Errorf("%w %s: %w", ErrInterfaceNotFound, name, err)
+		return errx.With(ErrInterfaceNotFound, " %s: %w", name, err)
 	}
 
 	ip, ipNet, err := net.ParseCIDR(cidr)
 	if err != nil {
-		return fmt.Errorf("%w %s: %w", ErrInvalidCIDR, cidr, err)
+		return errx.With(ErrInvalidCIDR, " %s: %w", cidr, err)
 	}
 
 	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrCreateSocket, err)
+		return errx.Wrap(ErrCreateSocket, err)
 	}
 	defer syscall.Close(fd)
 
@@ -78,7 +80,7 @@ func ConfigureInterface(name, cidr string) error {
 
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd),
 		syscall.SIOCSIFADDR, uintptr(unsafe.Pointer(&ifr))); errno != 0 {
-		return fmt.Errorf("%w: %w", ErrSIOCSIFADDR, errno)
+		return errx.Wrap(ErrSIOCSIFADDR, errno)
 	}
 
 	var maskReq struct {
@@ -92,7 +94,7 @@ func ConfigureInterface(name, cidr string) error {
 
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd),
 		syscall.SIOCSIFNETMASK, uintptr(unsafe.Pointer(&maskReq))); errno != 0 {
-		return fmt.Errorf("%w: %w", ErrSIOCSIFNETMASK, errno)
+		return errx.Wrap(ErrSIOCSIFNETMASK, errno)
 	}
 
 	var flagReq struct {
@@ -104,14 +106,14 @@ func ConfigureInterface(name, cidr string) error {
 
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd),
 		syscall.SIOCGIFFLAGS, uintptr(unsafe.Pointer(&flagReq))); errno != 0 {
-		return fmt.Errorf("%w: %w", ErrSIOCGIFFLAGS, errno)
+		return errx.Wrap(ErrSIOCGIFFLAGS, errno)
 	}
 
 	flagReq.flags |= syscall.IFF_UP | syscall.IFF_RUNNING
 
 	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd),
 		syscall.SIOCSIFFLAGS, uintptr(unsafe.Pointer(&flagReq))); errno != 0 {
-		return fmt.Errorf("%w: %w", ErrSIOCSIFFLAGS, errno)
+		return errx.Wrap(ErrSIOCSIFFLAGS, errno)
 	}
 
 	_ = iface
@@ -122,7 +124,7 @@ func DeleteInterface(name string) error {
 	// For persistent TAP devices, we need to open the device and clear TUNSETPERSIST
 	fd, err := syscall.Open(tunDevice, syscall.O_RDWR, 0)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrTUNOpen, err)
+		return errx.Wrap(ErrTUNOpen, err)
 	}
 	defer syscall.Close(fd)
 
@@ -133,14 +135,14 @@ func DeleteInterface(name string) error {
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd),
 		uintptr(syscall.TUNSETIFF), uintptr(unsafe.Pointer(&ifr)))
 	if errno != 0 {
-		return fmt.Errorf("%w: %w", ErrTUNSETIFF, errno)
+		return errx.Wrap(ErrTUNSETIFF, errno)
 	}
 
 	// Clear persistent flag to delete the device when FD is closed
 	_, _, errno = syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd),
 		uintptr(TUNSETPERSIST), 0)
 	if errno != 0 {
-		return fmt.Errorf("%w: %w", ErrTUNSETPERSISTOff, errno)
+		return errx.Wrap(ErrTUNSETPERSISTOff, errno)
 	}
 
 	return nil

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/jingkaihe/matchlock/internal/errx"
 	"github.com/jingkaihe/matchlock/pkg/api"
 	"github.com/jingkaihe/matchlock/pkg/sandbox"
 	"github.com/jingkaihe/matchlock/pkg/state"
@@ -51,7 +52,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 	mgr := state.NewManager()
 	vmState, err := mgr.Get(vmID)
 	if err != nil {
-		return fmt.Errorf("%w %s: %w", ErrVMNotFound, vmID, err)
+		return errx.With(ErrVMNotFound, " %s: %w", vmID, err)
 	}
 	if vmState.Status != "running" {
 		return fmt.Errorf("VM %s is not running (status: %s)", vmID, vmState.Status)
@@ -77,7 +78,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 
 	result, err := sandbox.ExecViaRelay(ctx, execSocketPath, command, workdir, user)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrExecFailed, err)
+		return errx.Wrap(ErrExecFailed, err)
 	}
 
 	os.Stdout.Write(result.Stdout)
@@ -89,7 +90,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 func runExecPipe(ctx context.Context, execSocketPath, command, workdir, user string) error {
 	exitCode, err := sandbox.ExecPipeViaRelay(ctx, execSocketPath, command, workdir, user, os.Stdin, os.Stdout, os.Stderr)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrPipeExecFailed, err)
+		return errx.Wrap(ErrPipeExecFailed, err)
 	}
 	os.Exit(exitCode)
 	return nil
@@ -107,14 +108,14 @@ func runExecInteractive(ctx context.Context, execSocketPath, command, workdir, u
 
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrSetRawMode, err)
+		return errx.Wrap(ErrSetRawMode, err)
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
 	exitCode, err := sandbox.ExecInteractiveViaRelay(ctx, execSocketPath, command, workdir, user, uint16(rows), uint16(cols), os.Stdin, os.Stdout)
 	if err != nil {
 		term.Restore(int(os.Stdin.Fd()), oldState)
-		return fmt.Errorf("%w: %w", ErrInteractiveExec, err)
+		return errx.Wrap(ErrInteractiveExec, err)
 	}
 
 	term.Restore(int(os.Stdin.Fd()), oldState)

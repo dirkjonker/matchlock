@@ -2,13 +2,15 @@ package image
 
 import (
 	"encoding/json"
-	"fmt"
+
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/jingkaihe/matchlock/internal/errx"
 )
 
 type OCIConfig struct {
@@ -49,30 +51,30 @@ func NewStore(baseDir string) *Store {
 func (s *Store) Save(tag string, rootfsPath string, meta ImageMeta) error {
 	dir := filepath.Join(s.baseDir, sanitizeRef(tag))
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("%w: %w", ErrCreateDir, err)
+		return errx.Wrap(ErrCreateDir, err)
 	}
 
 	destPath := filepath.Join(dir, "rootfs.ext4")
 
 	src, err := os.Open(rootfsPath)
 	if err != nil {
-		return fmt.Errorf("%w: open source rootfs: %w", ErrStoreSave, err)
+		return errx.With(ErrStoreSave, ": open source rootfs: %w", err)
 	}
 	defer src.Close()
 
 	dst, err := os.Create(destPath)
 	if err != nil {
-		return fmt.Errorf("%w: create dest rootfs: %w", ErrStoreSave, err)
+		return errx.With(ErrStoreSave, ": create dest rootfs: %w", err)
 	}
 
 	if _, err := io.Copy(dst, src); err != nil {
 		dst.Close()
 		os.Remove(destPath)
-		return fmt.Errorf("%w: copy rootfs: %w", ErrStoreSave, err)
+		return errx.With(ErrStoreSave, ": copy rootfs: %w", err)
 	}
 	if err := dst.Close(); err != nil {
 		os.Remove(destPath)
-		return fmt.Errorf("%w: flush rootfs: %w", ErrStoreSave, err)
+		return errx.With(ErrStoreSave, ": flush rootfs: %w", err)
 	}
 
 	meta.Tag = tag
@@ -86,12 +88,12 @@ func (s *Store) Save(tag string, rootfsPath string, meta ImageMeta) error {
 
 	metaBytes, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
-		return fmt.Errorf("%w: marshal: %w", ErrMetadata, err)
+		return errx.With(ErrMetadata, ": marshal: %w", err)
 	}
 
 	metaPath := filepath.Join(dir, "metadata.json")
 	if err := os.WriteFile(metaPath, metaBytes, 0644); err != nil {
-		return fmt.Errorf("%w: write: %w", ErrMetadata, err)
+		return errx.With(ErrMetadata, ": write: %w", err)
 	}
 
 	return nil
@@ -103,17 +105,17 @@ func (s *Store) Get(tag string) (*BuildResult, error) {
 	metaPath := filepath.Join(dir, "metadata.json")
 	metaBytes, err := os.ReadFile(metaPath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %q in local store", ErrImageNotFound, tag)
+		return nil, errx.With(ErrImageNotFound, ": %q in local store", tag)
 	}
 
 	var meta ImageMeta
 	if err := json.Unmarshal(metaBytes, &meta); err != nil {
-		return nil, fmt.Errorf("%w: read: %w", ErrMetadata, err)
+		return nil, errx.With(ErrMetadata, ": read: %w", err)
 	}
 
 	rootfsPath := filepath.Join(dir, "rootfs.ext4")
 	if _, err := os.Stat(rootfsPath); err != nil {
-		return nil, fmt.Errorf("%w: rootfs for %q", ErrImageNotFound, tag)
+		return nil, errx.With(ErrImageNotFound, ": rootfs for %q", tag)
 	}
 
 	fi, _ := os.Stat(rootfsPath)
@@ -132,7 +134,7 @@ func (s *Store) List() ([]ImageInfo, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("%w: store dir: %w", ErrStoreRead, err)
+		return nil, errx.With(ErrStoreRead, ": store dir: %w", err)
 	}
 
 	var images []ImageInfo
@@ -170,7 +172,7 @@ func (s *Store) List() ([]ImageInfo, error) {
 func (s *Store) Remove(tag string) error {
 	dir := filepath.Join(s.baseDir, sanitizeRef(tag))
 	if _, err := os.Stat(dir); err != nil {
-		return fmt.Errorf("%w: %q", ErrImageNotFound, tag)
+		return errx.With(ErrImageNotFound, ": %q", tag)
 	}
 	return os.RemoveAll(dir)
 }
@@ -184,10 +186,10 @@ func RemoveRegistryCache(tag string, cacheDir string) error {
 
 	dir := filepath.Join(cacheDir, sanitizeRef(tag))
 	if dir == filepath.Clean(cacheDir) || dir == filepath.Join(cacheDir, "local") {
-		return fmt.Errorf("%w: %q", ErrImageNotFound, tag)
+		return errx.With(ErrImageNotFound, ": %q", tag)
 	}
 	if _, err := os.Stat(dir); err != nil {
-		return fmt.Errorf("%w: %q", ErrImageNotFound, tag)
+		return errx.With(ErrImageNotFound, ": %q", tag)
 	}
 	return os.RemoveAll(dir)
 }
@@ -204,7 +206,7 @@ func ListRegistryCache(cacheDir string) ([]ImageInfo, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("%w: cache dir: %w", ErrStoreRead, err)
+		return nil, errx.With(ErrStoreRead, ": cache dir: %w", err)
 	}
 
 	var images []ImageInfo

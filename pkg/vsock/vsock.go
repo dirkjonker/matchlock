@@ -7,6 +7,8 @@ import (
 	"os"
 	"syscall"
 	"unsafe"
+
+	"github.com/jingkaihe/matchlock/internal/errx"
 )
 
 const (
@@ -101,7 +103,7 @@ func Listen(port uint32) (*Listener, error) {
 func ListenCID(cid, port uint32) (*Listener, error) {
 	fd, err := syscall.Socket(AF_VSOCK, syscall.SOCK_STREAM, 0)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCreateSocket, err)
+		return nil, errx.Wrap(ErrCreateSocket, err)
 	}
 
 	addr := sockaddrVM{
@@ -118,12 +120,12 @@ func ListenCID(cid, port uint32) (*Listener, error) {
 	)
 	if errno != 0 {
 		syscall.Close(fd)
-		return nil, fmt.Errorf("%w: %w", ErrBind, errno)
+		return nil, errx.Wrap(ErrBind, errno)
 	}
 
 	if err := syscall.Listen(fd, syscall.SOMAXCONN); err != nil {
 		syscall.Close(fd)
-		return nil, fmt.Errorf("%w: %w", ErrListen, err)
+		return nil, errx.Wrap(ErrListen, err)
 	}
 
 	return &Listener{
@@ -143,7 +145,7 @@ func (l *Listener) Accept() (*Conn, error) {
 		uintptr(unsafe.Pointer(&addrLen)),
 	)
 	if errno != 0 {
-		return nil, fmt.Errorf("%w: %w", ErrAccept, errno)
+		return nil, errx.Wrap(ErrAccept, errno)
 	}
 
 	return &Conn{
@@ -165,7 +167,7 @@ func (l *Listener) Addr() net.Addr {
 func Dial(cid, port uint32) (*Conn, error) {
 	fd, err := syscall.Socket(AF_VSOCK, syscall.SOCK_STREAM, 0)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCreateSocket, err)
+		return nil, errx.Wrap(ErrCreateSocket, err)
 	}
 
 	addr := sockaddrVM{
@@ -182,7 +184,7 @@ func Dial(cid, port uint32) (*Conn, error) {
 	)
 	if errno != 0 {
 		syscall.Close(fd)
-		return nil, fmt.Errorf("%w: %w", ErrConnect, errno)
+		return nil, errx.Wrap(ErrConnect, errno)
 	}
 
 	return &Conn{
@@ -196,7 +198,7 @@ func Dial(cid, port uint32) (*Conn, error) {
 func GetLocalCID() (uint32, error) {
 	f, err := os.Open("/dev/vsock")
 	if err != nil {
-		return 0, fmt.Errorf("%w: %w", ErrOpenDevice, err)
+		return 0, errx.Wrap(ErrOpenDevice, err)
 	}
 	defer f.Close()
 
@@ -208,7 +210,7 @@ func GetLocalCID() (uint32, error) {
 		uintptr(unsafe.Pointer(&cid)),
 	)
 	if errno != 0 {
-		return 0, fmt.Errorf("%w: %w", ErrGetLocalCID, errno)
+		return 0, errx.Wrap(ErrGetLocalCID, errno)
 	}
 
 	return cid, nil

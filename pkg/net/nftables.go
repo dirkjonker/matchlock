@@ -3,12 +3,12 @@
 package net
 
 import (
-	"fmt"
 	"net"
 
 	"github.com/google/nftables"
 	"github.com/google/nftables/binaryutil"
 	"github.com/google/nftables/expr"
+	"github.com/jingkaihe/matchlock/internal/errx"
 	"golang.org/x/sys/unix"
 )
 
@@ -49,7 +49,7 @@ func NewNFTablesRules(tapInterface, gatewayIP string, httpPort, httpsPort, passt
 func (r *NFTablesRules) Setup() error {
 	conn, err := nftables.New()
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrNFTablesConn, err)
+		return errx.Wrap(ErrNFTablesConn, err)
 	}
 	r.conn = conn
 
@@ -126,7 +126,7 @@ func (r *NFTablesRules) Setup() error {
 	})
 
 	if err := conn.Flush(); err != nil {
-		return fmt.Errorf("%w: %w", ErrNFTablesApply, err)
+		return errx.Wrap(ErrNFTablesApply, err)
 	}
 
 	return nil
@@ -335,7 +335,7 @@ func NewNFTablesNAT(tapInterface string) *NFTablesNAT {
 func (n *NFTablesNAT) Setup() error {
 	conn, err := nftables.New()
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrNFTablesConn, err)
+		return errx.Wrap(ErrNFTablesConn, err)
 	}
 	n.conn = conn
 
@@ -409,7 +409,7 @@ func (n *NFTablesNAT) Setup() error {
 	})
 
 	if err := conn.Flush(); err != nil {
-		return fmt.Errorf("%w: %w", ErrNFTablesApply, err)
+		return errx.Wrap(ErrNFTablesApply, err)
 	}
 
 	return nil

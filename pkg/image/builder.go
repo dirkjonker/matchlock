@@ -4,7 +4,7 @@ import (
 	"archive/tar"
 	"context"
 	"encoding/json"
-	"fmt"
+
 	"io"
 	"os"
 	"path/filepath"
@@ -16,6 +16,8 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+
+	"github.com/jingkaihe/matchlock/internal/errx"
 )
 
 type Builder struct {
@@ -59,7 +61,7 @@ func (b *Builder) Build(ctx context.Context, imageRef string) (*BuildResult, err
 
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrParseReference, err)
+		return nil, errx.Wrap(ErrParseReference, err)
 	}
 
 	cacheDir := filepath.Join(b.cacheDir, sanitizeRef(imageRef))
@@ -95,18 +97,18 @@ func (b *Builder) Build(ctx context.Context, imageRef string) (*BuildResult, err
 
 	img, err := remote.Image(ref, remoteOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrPullImage, err)
+		return nil, errx.Wrap(ErrPullImage, err)
 	}
 
 	digest, err := img.Digest()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrImageDigest, err)
+		return nil, errx.Wrap(ErrImageDigest, err)
 	}
 
 	rootfsPath := filepath.Join(cacheDir, digest.Hex[:12]+".ext4")
 
 	if err := os.MkdirAll(filepath.Dir(rootfsPath), 0755); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCreateDir, err)
+		return nil, errx.Wrap(ErrCreateDir, err)
 	}
 
 	if fi, err := os.Stat(rootfsPath); err == nil && fi.Size() > 0 {
@@ -122,18 +124,18 @@ func (b *Builder) Build(ctx context.Context, imageRef string) (*BuildResult, err
 
 	extractDir, err := os.MkdirTemp("", "matchlock-extract-*")
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrCreateTemp, err)
+		return nil, errx.Wrap(ErrCreateTemp, err)
 	}
 	defer os.RemoveAll(extractDir)
 
 	fileMetas, err := b.extractImage(img, extractDir)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrExtract, err)
+		return nil, errx.Wrap(ErrExtract, err)
 	}
 
 	if err := b.createExt4(extractDir, rootfsPath, fileMetas); err != nil {
 		os.Remove(rootfsPath)
-		return nil, fmt.Errorf("%w: %w", ErrCreateExt4, err)
+		return nil, errx.Wrap(ErrCreateExt4, err)
 	}
 
 	ociConfig := extractOCIConfig(img)
@@ -235,7 +237,7 @@ func (b *Builder) extractImage(img v1.Image, destDir string) (map[string]fileMet
 			break
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%w: read tar: %w", ErrExtract, err)
+			return nil, errx.With(ErrExtract, ": read tar: %w", err)
 		}
 
 		clean := filepath.Clean(hdr.Name)
@@ -247,38 +249,38 @@ func (b *Builder) extractImage(img v1.Image, destDir string) (map[string]fileMet
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := ensureRealDir(destDir, target); err != nil {
-				return nil, fmt.Errorf("%w: mkdir %s: %w", ErrExtract, clean, err)
+				return nil, errx.With(ErrExtract, ": mkdir %s: %w", clean, err)
 			}
 		case tar.TypeReg:
 			f, err := safeCreate(destDir, target, os.FileMode(hdr.Mode)&0777)
 			if err != nil {
-				return nil, fmt.Errorf("%w: create %s: %w", ErrExtract, clean, err)
+				return nil, errx.With(ErrExtract, ": create %s: %w", clean, err)
 			}
 			if _, err := io.Copy(f, tr); err != nil {
 				f.Close()
-				return nil, fmt.Errorf("%w: write %s: %w", ErrExtract, clean, err)
+				return nil, errx.With(ErrExtract, ": write %s: %w", clean, err)
 			}
 			f.Close()
 		case tar.TypeSymlink:
 			if err := ensureRealDir(destDir, filepath.Dir(target)); err != nil {
-				return nil, fmt.Errorf("%w: mkdir parent %s: %w", ErrExtract, clean, err)
+				return nil, errx.With(ErrExtract, ": mkdir parent %s: %w", clean, err)
 			}
 			if err := os.RemoveAll(target); err != nil {
-				return nil, fmt.Errorf("%w: remove existing %s: %w", ErrExtract, clean, err)
+				return nil, errx.With(ErrExtract, ": remove existing %s: %w", clean, err)
 			}
 			if err := os.Symlink(hdr.Linkname, target); err != nil {
-				return nil, fmt.Errorf("%w: symlink %s: %w", ErrExtract, clean, err)
+				return nil, errx.With(ErrExtract, ": symlink %s: %w", clean, err)
 			}
 		case tar.TypeLink:
 			linkTarget := filepath.Join(destDir, filepath.Clean(hdr.Linkname))
 			if err := ensureRealDir(destDir, filepath.Dir(target)); err != nil {
-				return nil, fmt.Errorf("%w: mkdir parent %s: %w", ErrExtract, clean, err)
+				return nil, errx.With(ErrExtract, ": mkdir parent %s: %w", clean, err)
 			}
 			if err := os.RemoveAll(target); err != nil {
-				return nil, fmt.Errorf("%w: remove existing %s: %w", ErrExtract, clean, err)
+				return nil, errx.With(ErrExtract, ": remove existing %s: %w", clean, err)
 			}
 			if err := os.Link(linkTarget, target); err != nil {
-				return nil, fmt.Errorf("%w: hardlink %s: %w", ErrExtract, clean, err)
+				return nil, errx.With(ErrExtract, ": hardlink %s: %w", clean, err)
 			}
 		default:
 			continue

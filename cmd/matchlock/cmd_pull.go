@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jingkaihe/matchlock/internal/errx"
 	"github.com/jingkaihe/matchlock/pkg/image"
 )
 
@@ -48,7 +49,7 @@ func runPull(cmd *cobra.Command, args []string) error {
 
 	if tag != "" {
 		if err := builder.SaveTag(tag, result); err != nil {
-			return fmt.Errorf("%w: %w", ErrSaveTag, err)
+			return errx.Wrap(ErrSaveTag, err)
 		}
 		fmt.Printf("Tagged: %s\n", tag)
 	}

@@ -4,14 +4,15 @@ package main
 
 import (
 	"encoding/binary"
-	"fmt"
 	"syscall"
+
+	"github.com/jingkaihe/matchlock/internal/errx"
 )
 
 func totalMemoryMB() (int, error) {
 	raw, err := syscall.Sysctl("hw.memsize")
 	if err != nil {
-		return 0, fmt.Errorf("%w: %w", ErrSysctlMemsize, err)
+		return 0, errx.Wrap(ErrSysctlMemsize, err)
 	}
 	b := []byte(raw)
 	if len(b) < 8 {

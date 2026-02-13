@@ -20,6 +20,7 @@ import (
 	"unsafe"
 
 	"github.com/creack/pty"
+	"github.com/jingkaihe/matchlock/internal/errx"
 )
 
 const (
@@ -709,7 +710,7 @@ func sendExecResponse(fd int, resp *ExecResponse) {
 func listenVsock(port uint32) (int, error) {
 	fd, err := syscall.Socket(AF_VSOCK, syscall.SOCK_STREAM, 0)
 	if err != nil {
-		return -1, fmt.Errorf("%w: %w", ErrSocket, err)
+		return -1, errx.Wrap(ErrSocket, err)
 	}
 
 	addr := sockaddrVM{
@@ -726,12 +727,12 @@ func listenVsock(port uint32) (int, error) {
 	)
 	if errno != 0 {
 		syscall.Close(fd)
-		return -1, fmt.Errorf("%w: %w", ErrBind, errno)
+		return -1, errx.Wrap(ErrBind, errno)
 	}
 
 	if err := syscall.Listen(fd, syscall.SOMAXCONN); err != nil {
 		syscall.Close(fd)
-		return -1, fmt.Errorf("%w: %w", ErrListen, err)
+		return -1, errx.Wrap(ErrListen, err)
 	}
 
 	return fd, nil
@@ -757,7 +758,7 @@ func acceptVsock(listenFd int) (int, error) {
 func dialVsock(cid, port uint32) (int, error) {
 	fd, err := syscall.Socket(AF_VSOCK, syscall.SOCK_STREAM, 0)
 	if err != nil {
-		return -1, fmt.Errorf("%w: %w", ErrSocket, err)
+		return -1, errx.Wrap(ErrSocket, err)
 	}
 
 	addr := sockaddrVM{
@@ -774,7 +775,7 @@ func dialVsock(cid, port uint32) (int, error) {
 	)
 	if errno != 0 {
 		syscall.Close(fd)
-		return -1, fmt.Errorf("%w: %w", ErrConnect, errno)
+		return -1, errx.Wrap(ErrConnect, errno)
 	}
 
 	return fd, nil

@@ -7,7 +7,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"fmt"
+
 	"io"
 	"net"
 	"os"
@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Code-Hex/vz/v3"
+	"github.com/jingkaihe/matchlock/internal/errx"
 	"github.com/jingkaihe/matchlock/pkg/api"
 	"github.com/jingkaihe/matchlock/pkg/vm"
 	"github.com/jingkaihe/matchlock/pkg/vsock"
@@ -41,14 +42,14 @@ func (m *DarwinMachine) Start(ctx context.Context) error {
 	}
 
 	if err := m.vm.Start(); err != nil {
-		return fmt.Errorf("%w: %w", ErrVMStart, err)
+		return errx.Wrap(ErrVMStart, err)
 	}
 
 	m.started = true
 
 	if err := m.waitForReady(ctx, 30*time.Second); err != nil {
 		m.Stop(ctx)
-		return fmt.Errorf("%w: %w", ErrVMNotReady, err)
+		return errx.Wrap(ErrVMNotReady, err)
 	}
 
 	return nil
@@ -167,7 +168,7 @@ func (m *DarwinMachine) Exec(ctx context.Context, command string, opts *api.Exec
 	if opts != nil && opts.Stdin != nil {
 		conn, err := m.dialVsock(VsockPortExec)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrExecConnect, err)
+			return nil, errx.Wrap(ErrExecConnect, err)
 		}
 		return vsock.ExecPipe(ctx, conn, command, opts)
 	}
@@ -176,7 +177,7 @@ func (m *DarwinMachine) Exec(ctx context.Context, command string, opts *api.Exec
 
 	conn, err := m.dialVsock(VsockPortExec)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrExecConnect, err)
+		return nil, errx.Wrap(ErrExecConnect, err)
 	}
 	defer conn.Close()
 
@@ -198,7 +199,7 @@ func (m *DarwinMachine) Exec(ctx context.Context, command string, opts *api.Exec
 
 	reqData, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrExecEncode, err)
+		return nil, errx.Wrap(ErrExecEncode, err)
 	}
 
 	streaming := opts != nil && (opts.Stdout != nil || opts.Stderr != nil)
@@ -218,13 +219,13 @@ func (m *DarwinMachine) Exec(ctx context.Context, command string, opts *api.Exec
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("%w: %w", ErrExecWriteHeader, err)
+		return nil, errx.Wrap(ErrExecWriteHeader, err)
 	}
 	if _, err := conn.Write(reqData); err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fmt.Errorf("%w: %w", ErrExecWriteReq, err)
+		return nil, errx.Wrap(ErrExecWriteReq, err)
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -233,7 +234,7 @@ func (m *DarwinMachine) Exec(ctx context.Context, command string, opts *api.Exec
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			return nil, fmt.Errorf("%w: %w", ErrExecReadHeader, err)
+			return nil, errx.Wrap(ErrExecReadHeader, err)
 		}
 
 		msgType := header[0]
@@ -245,7 +246,7 @@ func (m *DarwinMachine) Exec(ctx context.Context, command string, opts *api.Exec
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
 				}
-				return nil, fmt.Errorf("%w: %w", ErrExecReadData, err)
+				return nil, errx.Wrap(ErrExecReadData, err)
 			}
 		}
 
@@ -263,7 +264,7 @@ func (m *DarwinMachine) Exec(ctx context.Context, command string, opts *api.Exec
 		case vsock.MsgTypeExecResult:
 			var resp vsock.ExecResponse
 			if err := json.Unmarshal(data, &resp); err != nil {
-				return nil, fmt.Errorf("%w: %w", ErrExecDecode, err)
+				return nil, errx.Wrap(ErrExecDecode, err)
 			}
 
 			duration := time.Since(start)
@@ -286,7 +287,7 @@ func (m *DarwinMachine) Exec(ctx context.Context, command string, opts *api.Exec
 			}
 
 			if resp.Error != "" {
-				return result, fmt.Errorf("%w: %s", ErrExecRemote, resp.Error)
+				return result, errx.With(ErrExecRemote, ": %s", resp.Error)
 			}
 
 			return result, nil
@@ -297,7 +298,7 @@ func (m *DarwinMachine) Exec(ctx context.Context, command string, opts *api.Exec
 func (m *DarwinMachine) ExecInteractive(ctx context.Context, command string, opts *api.ExecOptions, rows, cols uint16, stdin io.Reader, stdout io.Writer, resizeCh <-chan [2]uint16) (int, error) {
 	conn, err := m.dialVsock(VsockPortExec)
 	if err != nil {
-		return 1, fmt.Errorf("%w: %w", ErrExecConnect, err)
+		return 1, errx.Wrap(ErrExecConnect, err)
 	}
 	defer conn.Close()
 
@@ -314,7 +315,7 @@ func (m *DarwinMachine) ExecInteractive(ctx context.Context, command string, opt
 
 	reqData, err := json.Marshal(req)
 	if err != nil {
-		return 1, fmt.Errorf("%w: %w", ErrExecEncodeReq, err)
+		return 1, errx.Wrap(ErrExecEncodeReq, err)
 	}
 
 	header := make([]byte, 5)
@@ -322,10 +323,10 @@ func (m *DarwinMachine) ExecInteractive(ctx context.Context, command string, opt
 	binary.BigEndian.PutUint32(header[1:], uint32(len(reqData)))
 
 	if _, err := conn.Write(header); err != nil {
-		return 1, fmt.Errorf("%w: %w", ErrExecWriteHeader, err)
+		return 1, errx.Wrap(ErrExecWriteHeader, err)
 	}
 	if _, err := conn.Write(reqData); err != nil {
-		return 1, fmt.Errorf("%w: %w", ErrExecWriteReq, err)
+		return 1, errx.Wrap(ErrExecWriteReq, err)
 	}
 
 	done := make(chan int, 1)
@@ -434,19 +435,19 @@ func (m *DarwinMachine) Close(ctx context.Context) error {
 
 	if started {
 		if err := m.stop(ctx, false); err != nil {
-			errs = append(errs, fmt.Errorf("%w: %w", ErrStop, err))
+			errs = append(errs, errx.Wrap(ErrStop, err))
 		}
 	}
 
 	if m.vfsListener != nil {
 		if err := m.vfsListener.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("%w: %w", ErrCloseVFSListener, err))
+			errs = append(errs, errx.Wrap(ErrCloseVFSListener, err))
 		}
 	}
 
 	if m.socketPair != nil {
 		if err := m.socketPair.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("%w: %w", ErrCloseSocketPair, err))
+			errs = append(errs, errx.Wrap(ErrCloseSocketPair, err))
 		}
 	}
 

@@ -1,10 +1,11 @@
 package api
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/jingkaihe/matchlock/internal/errx"
 )
 
 // ParseVolumeMount parses a volume mount string in format "host:guest" or "host:guest:ro".
@@ -22,13 +23,13 @@ func ParseVolumeMount(vol string, workspace string) (hostPath, guestPath string,
 	if !filepath.IsAbs(hostPath) {
 		hostPath, err = filepath.Abs(hostPath)
 		if err != nil {
-			return "", "", false, fmt.Errorf("%w: %w", ErrResolvePath, err)
+			return "", "", false, errx.Wrap(ErrResolvePath, err)
 		}
 	}
 
 	// Verify host path exists
 	if _, err := os.Stat(hostPath); err != nil {
-		return "", "", false, fmt.Errorf("%w: %s", ErrHostPathNotExist, hostPath)
+		return "", "", false, errx.With(ErrHostPathNotExist, ": %s", hostPath)
 	}
 
 	// Check for readonly flag
@@ -36,7 +37,7 @@ func ParseVolumeMount(vol string, workspace string) (hostPath, guestPath string,
 		if parts[2] == "ro" || parts[2] == "readonly" {
 			readonly = true
 		} else {
-			return "", "", false, fmt.Errorf("%w %q (use 'ro' for readonly)", ErrUnknownMountOption, parts[2])
+			return "", "", false, errx.With(ErrUnknownMountOption, " %q (use 'ro' for readonly)", parts[2])
 		}
 	}
 
@@ -64,10 +65,10 @@ func ValidateGuestPathWithinWorkspace(guestPath string, workspace string) error 
 	cleanWorkspace := filepath.Clean(workspace)
 
 	if !filepath.IsAbs(cleanGuestPath) {
-		return fmt.Errorf("%w: %q", ErrGuestPathNotAbs, guestPath)
+		return errx.With(ErrGuestPathNotAbs, ": %q", guestPath)
 	}
 	if !isWithinWorkspace(cleanGuestPath, cleanWorkspace) {
-		return fmt.Errorf("%w: %q not in %q", ErrGuestPathOutside, cleanGuestPath, cleanWorkspace)
+		return errx.With(ErrGuestPathOutside, ": %q not in %q", cleanGuestPath, cleanWorkspace)
 	}
 	return nil
 }

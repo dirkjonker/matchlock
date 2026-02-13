@@ -36,8 +36,7 @@ matchlock/
 │   │   └── linux/        # Linux/Firecracker implementation
 │   └── vsock/            # Vsock communication layer
 ├── internal/
-│   ├── images/           # Internal image handling utilities
-│   └── mitm/             # MITM proxy internals
+│   └── errx/             # Shared sentinel error wrapping helpers
 ├── guest/
 │   ├── kernel/           # Guest kernel Dockerfile + per-arch .config files
 │   ├── initramfs/        # Guest initramfs setup
@@ -61,7 +60,8 @@ This project uses [mise](https://mise.jdx.dev/) for task management and dev depe
 mise install         # Install dev dependencies (Go, golangci-lint, crane)
 mise run build       # Build CLI (codesigned on macOS) + guest binaries
 mise run test        # Run tests
-mise run check       # Run all checks (fmt, vet, lint, test)
+mise run check       # Run all checks (fmt, vet, lint, test, check:errx)
+mise run check:errx  # Ensure sentinel wrapping uses internal/errx helpers
 mise run fmt         # Format code
 ```
 
@@ -399,15 +399,17 @@ var (
 )
 ```
 
-2. **Wrap errors** using `fmt.Errorf` with two `%w` verbs — the sentinel and the underlying error:
+2. **Wrap errors** with `internal/errx` helpers:
 ```go
-return fmt.Errorf("%w: %w", ErrParseReference, err)
+import "github.com/jingkaihe/matchlock/internal/errx"
+
+return errx.Wrap(ErrParseReference, err)
 ```
 
-3. **Include dynamic context** (paths, indices, etc.) between the two `%w` verbs:
+3. **Include dynamic context** (paths, indices, etc.) with `errx.With`:
 ```go
-return fmt.Errorf("%w %s: %w", ErrKernelNotFound, config.KernelPath, err)
-return fmt.Errorf("%w disk %d: %w", ErrCreateDiskAttachment, i, err)
+return errx.With(ErrKernelNotFound, " %s: %w", config.KernelPath, err)
+return errx.With(ErrCreateDiskAttachment, " disk %d: %w", i, err)
 ```
 
 4. **Return sentinels directly** when there's no underlying error to wrap:
@@ -421,7 +423,8 @@ return ErrImageNotFound
 - **Unexported sentinels** (`errFoo`) in `main` packages, tests, and examples
 - **Group sentinels** by operation category, not by individual call site — e.g., one `ErrExtract` for all tar extraction failures, not separate sentinels per tar operation
 - **Sentinel names** should be concise and describe the operation that failed, without "failed to" prefix — e.g., `ErrCreateSocket` not `ErrFailedToCreateSocket`
-- **Never use** bare `fmt.Errorf("message: %w", err)` without a sentinel — always wrap with `fmt.Errorf("%w: %w", ErrSentinel, err)`
+- **Do not** use direct `%w`-prefixed `fmt.Errorf` in packages — use `errx.Wrap` / `errx.With` instead
+- **Guardrail:** `mise run check:errx` fails if `%w`-prefixed `fmt.Errorf` appears outside `internal/errx/errx.go`
 
 ### Checking Errors
 

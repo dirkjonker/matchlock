@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/jingkaihe/matchlock/internal/errx"
 )
 
 // JSON-RPC request/response types
@@ -127,14 +129,14 @@ func (c *Client) sendRequestCtx(ctx context.Context, method string, params inter
 
 	data, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrMarshalRequest, err)
+		return nil, errx.Wrap(ErrMarshalRequest, err)
 	}
 
 	c.writeMu.Lock()
 	_, writeErr := fmt.Fprintln(c.stdin, string(data))
 	c.writeMu.Unlock()
 	if writeErr != nil {
-		return nil, fmt.Errorf("%w: %w", ErrWriteRequest, writeErr)
+		return nil, errx.Wrap(ErrWriteRequest, writeErr)
 	}
 
 	select {
@@ -171,7 +173,7 @@ func (c *Client) startReader() {
 			if err != nil {
 				c.pendingMu.Lock()
 				for _, p := range c.pending {
-					p.ch <- pendingResult{err: fmt.Errorf("%w: %w", ErrConnectionClose, err)}
+					p.ch <- pendingResult{err: errx.Wrap(ErrConnectionClose, err)}
 				}
 				c.pending = nil
 				c.pendingMu.Unlock()

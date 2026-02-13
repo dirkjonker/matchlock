@@ -19,9 +19,9 @@ var (
 
 // Wire protocol errors
 var (
-	ErrEncodeExecRequest = errors.New("encode exec request")
-	ErrWriteHeader       = errors.New("write header")
-	ErrWriteRequest      = errors.New("write request")
+	ErrEncodeExecRequest  = errors.New("encode exec request")
+	ErrWriteHeader        = errors.New("write header")
+	ErrWriteRequest       = errors.New("write request")
 	ErrReadResponseHeader = errors.New("read response header")
 	ErrReadResponseData   = errors.New("read response data")
 )

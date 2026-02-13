@@ -25,7 +25,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
+
 	"io"
 	"os"
 	"os/exec"
@@ -33,6 +33,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jingkaihe/matchlock/internal/errx"
 	"github.com/jingkaihe/matchlock/pkg/api"
 )
 
@@ -85,21 +86,21 @@ func NewClient(cfg Config) (*Client, error) {
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrStdinPipe, err)
+		return nil, errx.Wrap(ErrStdinPipe, err)
 	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrStdoutPipe, err)
+		return nil, errx.Wrap(ErrStdoutPipe, err)
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrStderrPipe, err)
+		return nil, errx.Wrap(ErrStderrPipe, err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrStartProc, err)
+		return nil, errx.Wrap(ErrStartProc, err)
 	}
 
 	// Drain stderr in background to prevent blocking
@@ -164,7 +165,7 @@ func (c *Client) Close(timeout time.Duration) error {
 	case <-time.After(timeout):
 		c.cmd.Process.Kill()
 		<-done
-		return fmt.Errorf("%w after %s", ErrCloseTimeout, timeout)
+		return errx.With(ErrCloseTimeout, " after %s", timeout)
 	}
 }
 
@@ -178,7 +179,7 @@ func (c *Client) Remove() error {
 	bin := c.cmd.Path
 	out, err := exec.Command(bin, "rm", c.vmID).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%w %s: %s: %w", ErrRemoveVM, c.vmID, out, err)
+		return errx.With(ErrRemoveVM, " %s: %s: %w", c.vmID, out, err)
 	}
 	return nil
 }
@@ -317,7 +318,7 @@ func (c *Client) Create(opts CreateOptions) (string, error) {
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(result, &createResult); err != nil {
-		return "", fmt.Errorf("%w: %w", ErrParseCreateResult, err)
+		return "", errx.Wrap(ErrParseCreateResult, err)
 	}
 
 	c.vmID = createResult.ID
@@ -364,7 +365,7 @@ func (c *Client) ExecWithDir(ctx context.Context, command, workingDir string) (*
 		DurationMS int64  `json:"duration_ms"`
 	}
 	if err := json.Unmarshal(result, &execResult); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrParseExecResult, err)
+		return nil, errx.Wrap(ErrParseExecResult, err)
 	}
 
 	stdout, _ := base64.StdEncoding.DecodeString(execResult.Stdout)
@@ -435,7 +436,7 @@ func (c *Client) ExecStreamWithDir(ctx context.Context, command, workingDir stri
 		DurationMS int64 `json:"duration_ms"`
 	}
 	if err := json.Unmarshal(result, &streamResult); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrParseExecStreamResult, err)
+		return nil, errx.Wrap(ErrParseExecStreamResult, err)
 	}
 
 	return &ExecStreamResult{
@@ -476,7 +477,7 @@ func (c *Client) ReadFile(ctx context.Context, path string) ([]byte, error) {
 		Content string `json:"content"`
 	}
 	if err := json.Unmarshal(result, &readResult); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrParseReadResult, err)
+		return nil, errx.Wrap(ErrParseReadResult, err)
 	}
 
 	return base64.StdEncoding.DecodeString(readResult.Content)
@@ -505,7 +506,7 @@ func (c *Client) ListFiles(ctx context.Context, path string) ([]FileInfo, error)
 		Files []FileInfo `json:"files"`
 	}
 	if err := json.Unmarshal(result, &listResult); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrParseListResult, err)
+		return nil, errx.Wrap(ErrParseListResult, err)
 	}
 
 	return listResult.Files, nil

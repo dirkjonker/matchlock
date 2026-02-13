@@ -29,11 +29,11 @@ var (
 
 // Exec errors
 var (
-	ErrVMNotFound        = errors.New("VM not found")
-	ErrExecFailed        = errors.New("exec failed")
-	ErrPipeExecFailed    = errors.New("pipe exec failed")
-	ErrSetRawMode        = errors.New("setting raw mode")
-	ErrInteractiveExec   = errors.New("interactive exec failed")
+	ErrVMNotFound      = errors.New("VM not found")
+	ErrExecFailed      = errors.New("exec failed")
+	ErrPipeExecFailed  = errors.New("pipe exec failed")
+	ErrSetRawMode      = errors.New("setting raw mode")
+	ErrInteractiveExec = errors.New("interactive exec failed")
 )
 
 // Pull errors
@@ -48,27 +48,27 @@ var (
 
 // Run errors
 var (
-	ErrBuildingRootfs    = errors.New("building rootfs")
-	ErrInvalidVolume     = errors.New("invalid volume mount")
-	ErrInvalidSecret     = errors.New("invalid secret")
-	ErrCreateSandbox     = errors.New("creating sandbox")
-	ErrStartSandbox      = errors.New("starting sandbox")
-	ErrExecCommand       = errors.New("executing command")
+	ErrBuildingRootfs = errors.New("building rootfs")
+	ErrInvalidVolume  = errors.New("invalid volume mount")
+	ErrInvalidSecret  = errors.New("invalid secret")
+	ErrCreateSandbox  = errors.New("creating sandbox")
+	ErrStartSandbox   = errors.New("starting sandbox")
+	ErrExecCommand    = errors.New("executing command")
 )
 
 // Setup errors (Linux)
 var (
-	ErrDetermineUser   = errors.New("could not determine user")
-	ErrDownloadFailed  = errors.New("download failed")
-	ErrGzipReader      = errors.New("gzip reader")
-	ErrTarReader       = errors.New("tar reader")
-	ErrCreateFile      = errors.New("create file")
-	ErrWriteFile       = errors.New("write file")
-	ErrCreateNetdev    = errors.New("create netdev group")
-	ErrAddToNetdev     = errors.New("add user to netdev group")
-	ErrChownTun        = errors.New("chown /dev/net/tun")
-	ErrWriteSysctl     = errors.New("write sysctl config")
-	ErrNfTablesModule  = errors.New("nf_tables module not available")
+	ErrDetermineUser  = errors.New("could not determine user")
+	ErrDownloadFailed = errors.New("download failed")
+	ErrGzipReader     = errors.New("gzip reader")
+	ErrTarReader      = errors.New("tar reader")
+	ErrCreateFile     = errors.New("create file")
+	ErrWriteFile      = errors.New("write file")
+	ErrCreateNetdev   = errors.New("create netdev group")
+	ErrAddToNetdev    = errors.New("add user to netdev group")
+	ErrChownTun       = errors.New("chown /dev/net/tun")
+	ErrWriteSysctl    = errors.New("write sysctl config")
+	ErrNfTablesModule = errors.New("nf_tables module not available")
 )
 
 // Sysinfo errors

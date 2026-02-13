@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/jingkaihe/matchlock/internal/errx"
 )
 
 const initScript = `#!/bin/sh
@@ -116,10 +118,10 @@ func prepareRootfs(rootfsPath string, diskSizeMB int64) error {
 	guestFusedPath := DefaultGuestFusedPath()
 
 	if _, err := os.Stat(guestAgentPath); err != nil {
-		return fmt.Errorf("%w at %s: %w", ErrGuestAgent, guestAgentPath, err)
+		return errx.With(ErrGuestAgent, " at %s: %w", guestAgentPath, err)
 	}
 	if _, err := os.Stat(guestFusedPath); err != nil {
-		return fmt.Errorf("%w at %s: %w", ErrGuestFused, guestFusedPath, err)
+		return errx.With(ErrGuestFused, " at %s: %w", guestFusedPath, err)
 	}
 
 	// Resize BEFORE injecting components so that the filesystem has free space.
@@ -127,19 +129,19 @@ func prepareRootfs(rootfsPath string, diskSizeMB int64) error {
 	// free blocks in the ext4 image created by createExt4.
 	if diskSizeMB > 0 {
 		if err := resizeRootfs(rootfsPath, diskSizeMB); err != nil {
-			return fmt.Errorf("%w: %w", ErrResizeRootfs, err)
+			return errx.Wrap(ErrResizeRootfs, err)
 		}
 	}
 
 	// Write init script to temp file for debugfs injection
 	initTmp, err := os.CreateTemp("", "matchlock-init-*")
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrCreateTemp, err)
+		return errx.Wrap(ErrCreateTemp, err)
 	}
 	defer os.Remove(initTmp.Name())
 	if _, err := initTmp.WriteString(initScript); err != nil {
 		initTmp.Close()
-		return fmt.Errorf("%w: %w", ErrWriteTemp, err)
+		return errx.Wrap(ErrWriteTemp, err)
 	}
 	initTmp.Close()
 
@@ -191,7 +193,7 @@ func prepareRootfs(rootfsPath string, diskSizeMB int64) error {
 	cmd := exec.Command("debugfs", "-w", rootfsPath)
 	cmd.Stdin = strings.NewReader(cmdStr)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%w inject components: %w: %s", ErrDebugfs, err, output)
+		return errx.With(ErrDebugfs, " inject components: %w: %s", err, output)
 	}
 
 	return nil
@@ -207,7 +209,7 @@ func resizeRootfs(rootfsPath string, sizeMB int64) error {
 
 	fi, err := os.Stat(rootfsPath)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrStatRootfs, err)
+		return errx.Wrap(ErrStatRootfs, err)
 	}
 
 	targetBytes := sizeMB * 1024 * 1024
@@ -216,7 +218,7 @@ func resizeRootfs(rootfsPath string, sizeMB int64) error {
 	}
 
 	if err := os.Truncate(rootfsPath, targetBytes); err != nil {
-		return fmt.Errorf("%w: %w", ErrTruncate, err)
+		return errx.Wrap(ErrTruncate, err)
 	}
 
 	e2fsckPath, _ := exec.LookPath("e2fsck")
@@ -234,7 +236,7 @@ func resizeRootfs(rootfsPath string, sizeMB int64) error {
 	cmd := exec.Command(resize2fsPath, "-f", rootfsPath)
 	cmd.Stdin = nil
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%w: %w: %s", ErrResize2fs, err, out)
+		return errx.With(ErrResize2fs, ": %w: %s", err, out)
 	}
 
 	return nil
@@ -246,14 +248,14 @@ func resizeRootfs(rootfsPath string, sizeMB int64) error {
 func injectConfigFileIntoRootfs(rootfsPath, guestPath string, content []byte) error {
 	tmpFile, err := os.CreateTemp("", "inject-*")
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrCreateTemp, err)
+		return errx.Wrap(ErrCreateTemp, err)
 	}
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
 	if _, err := tmpFile.Write(content); err != nil {
 		tmpFile.Close()
-		return fmt.Errorf("%w: %w", ErrWriteTemp, err)
+		return errx.Wrap(ErrWriteTemp, err)
 	}
 	tmpFile.Close()
 
@@ -276,7 +278,7 @@ func injectConfigFileIntoRootfs(rootfsPath, guestPath string, content []byte) er
 	cmd := exec.Command("debugfs", "-w", rootfsPath)
 	cmd.Stdin = strings.NewReader(cmdStr)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%w: %w: %s", ErrDebugfs, err, output)
+		return errx.With(ErrDebugfs, ": %w: %s", err, output)
 	}
 
 	return nil
