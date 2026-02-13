@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func matchlockBin(t *testing.T) string {
@@ -32,7 +35,7 @@ func runCLI(t *testing.T, args ...string) (string, string, int) {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
-			t.Fatalf("failed to run %s %v: %v", bin, args, err)
+			require.NoError(t, err, "failed to run %s %v", bin, args)
 		}
 	}
 	return stdout.String(), stderr.String(), exitCode
@@ -47,9 +50,7 @@ func runCLIWithTimeout(t *testing.T, timeout time.Duration, args ...string) (str
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("failed to start %s %v: %v", bin, args, err)
-	}
+	require.NoError(t, cmd.Start(), "failed to start %s %v", bin, args)
 
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -65,7 +66,7 @@ func runCLIWithTimeout(t *testing.T, timeout time.Duration, args ...string) (str
 		return stdout.String(), stderr.String(), exitCode
 	case <-time.After(timeout):
 		cmd.Process.Kill()
-		t.Fatalf("command timed out: %s %v", bin, args)
+		require.Fail(t, "command timed out", "%s %v", bin, args)
 		return "", "", -1
 	}
 }
@@ -76,25 +77,15 @@ func runCLIWithTimeout(t *testing.T, timeout time.Duration, args ...string) (str
 
 func TestCLIVersion(t *testing.T) {
 	stdout, _, exitCode := runCLI(t, "version")
-	if exitCode != 0 {
-		t.Fatalf("exit code = %d, want 0", exitCode)
-	}
-	if !strings.HasPrefix(stdout, "matchlock ") {
-		t.Errorf("stdout = %q, want prefix 'matchlock '", stdout)
-	}
-	if !strings.Contains(stdout, "commit:") {
-		t.Errorf("stdout = %q, want to contain 'commit:'", stdout)
-	}
+	require.Equal(t, 0, exitCode)
+	assert.True(t, strings.HasPrefix(stdout, "matchlock "), "stdout = %q, want prefix 'matchlock '", stdout)
+	assert.Contains(t, stdout, "commit:")
 }
 
 func TestCLIVersionFlag(t *testing.T) {
 	stdout, _, exitCode := runCLI(t, "--version")
-	if exitCode != 0 {
-		t.Fatalf("exit code = %d, want 0", exitCode)
-	}
-	if !strings.Contains(stdout, "matchlock") {
-		t.Errorf("stdout = %q, want to contain 'matchlock'", stdout)
-	}
+	require.Equal(t, 0, exitCode)
+	assert.Contains(t, stdout, "matchlock")
 }
 
 // ---------------------------------------------------------------------------
@@ -103,26 +94,18 @@ func TestCLIVersionFlag(t *testing.T) {
 
 func TestCLIPull(t *testing.T) {
 	stdout, _, exitCode := runCLIWithTimeout(t, 5*time.Minute, "pull", "alpine:latest")
-	if exitCode != 0 {
-		t.Fatalf("exit code = %d, want 0; stdout: %s", exitCode, stdout)
-	}
-	if !strings.Contains(stdout, "Digest:") {
-		t.Errorf("expected pull output with Digest, got: %s", stdout)
-	}
+	require.Equalf(t, 0, exitCode, "stdout: %s", stdout)
+	assert.Contains(t, stdout, "Digest:")
 }
 
 func TestCLIPullMissingImage(t *testing.T) {
 	_, _, exitCode := runCLI(t, "pull")
-	if exitCode == 0 {
-		t.Errorf("expected non-zero exit code for missing image arg")
-	}
+	assert.NotEqual(t, 0, exitCode, "expected non-zero exit code for missing image arg")
 }
 
 func TestCLIBuildMissingContext(t *testing.T) {
 	_, _, exitCode := runCLI(t, "build")
-	if exitCode == 0 {
-		t.Errorf("expected non-zero exit code for missing context arg")
-	}
+	assert.NotEqual(t, 0, exitCode, "expected non-zero exit code for missing context arg")
 }
 
 // ---------------------------------------------------------------------------
@@ -131,50 +114,34 @@ func TestCLIBuildMissingContext(t *testing.T) {
 
 func TestCLIRunEchoHello(t *testing.T) {
 	stdout, _, exitCode := runCLIWithTimeout(t, 2*time.Minute, "run", "--image", "alpine:latest", "echo", "hello")
-	if exitCode != 0 {
-		t.Fatalf("exit code = %d, want 0", exitCode)
-	}
-	if !strings.Contains(stdout, "hello") {
-		t.Errorf("stdout = %q, want to contain 'hello'", stdout)
-	}
+	require.Equal(t, 0, exitCode)
+	assert.Contains(t, stdout, "hello")
 }
 
 func TestCLIRunCatOsRelease(t *testing.T) {
 	stdout, _, exitCode := runCLIWithTimeout(t, 2*time.Minute, "run", "--image", "alpine:latest", "cat", "/etc/os-release")
-	if exitCode != 0 {
-		t.Fatalf("exit code = %d, want 0", exitCode)
-	}
-	if !strings.Contains(stdout, "Alpine") {
-		t.Errorf("expected Alpine in os-release output, got: %s", stdout)
-	}
+	require.Equal(t, 0, exitCode)
+	assert.Contains(t, stdout, "Alpine")
 }
 
 func TestCLIRunMissingImage(t *testing.T) {
 	_, _, exitCode := runCLI(t, "run", "echo", "hello")
-	if exitCode == 0 {
-		t.Errorf("expected non-zero exit code when --image is missing")
-	}
+	assert.NotEqual(t, 0, exitCode, "expected non-zero exit code when --image is missing")
 }
 
 func TestCLIRunNoCommand(t *testing.T) {
 	// Alpine has CMD ["/bin/sh"], so running without user-provided args uses
 	// the image default command and should succeed (exit 0).
 	_, _, exitCode := runCLI(t, "run", "--image", "alpine:latest")
-	if exitCode != 0 {
-		t.Errorf("exit code = %d, want 0 (image CMD /bin/sh should be used)", exitCode)
-	}
+	assert.Equal(t, 0, exitCode, "image CMD /bin/sh should be used")
 }
 
 func TestCLIRunMultiWordCommand(t *testing.T) {
 	// "--" separates matchlock flags from the guest command so cobra
 	// doesn't interpret -c as a flag.
 	stdout, _, exitCode := runCLIWithTimeout(t, 2*time.Minute, "run", "--image", "alpine:latest", "--", "sh", "-c", "echo foo bar")
-	if exitCode != 0 {
-		t.Fatalf("exit code = %d, want 0", exitCode)
-	}
-	if !strings.Contains(stdout, "foo bar") {
-		t.Errorf("stdout = %q, want to contain 'foo bar'", stdout)
-	}
+	require.Equal(t, 0, exitCode)
+	assert.Contains(t, stdout, "foo bar")
 }
 
 // ---------------------------------------------------------------------------
@@ -188,9 +155,7 @@ func TestCLILifecycle(t *testing.T) {
 	cmd := exec.Command(bin, "run", "--image", "alpine:latest", "--rm=false")
 	var runStderr strings.Builder
 	cmd.Stderr = &runStderr
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("failed to start run: %v", err)
-	}
+	require.NoError(t, cmd.Start(), "failed to start run")
 	runPID := cmd.Process.Pid
 
 	// Wait for the sandbox to register and become visible in "list"
@@ -210,10 +175,7 @@ func TestCLILifecycle(t *testing.T) {
 			break
 		}
 	}
-	if vmID == "" {
-		cmd.Process.Kill()
-		t.Fatalf("timed out waiting for sandbox to appear in list. stderr: %s", runStderr.String())
-	}
+	require.NotEmptyf(t, vmID, "timed out waiting for sandbox to appear in list. stderr: %s", runStderr.String())
 
 	t.Cleanup(func() {
 		// Ensure cleanup even if test fails partway
@@ -230,103 +192,67 @@ func TestCLILifecycle(t *testing.T) {
 	// --- list ---
 	t.Run("list", func(t *testing.T) {
 		stdout, _, exitCode := runCLI(t, "list")
-		if exitCode != 0 {
-			t.Fatalf("list exit code = %d", exitCode)
-		}
-		if !strings.Contains(stdout, vmID) {
-			t.Errorf("list output should contain %s, got: %s", vmID, stdout)
-		}
-		if !strings.Contains(stdout, "running") {
-			t.Errorf("list output should show 'running' status, got: %s", stdout)
-		}
+		require.Equal(t, 0, exitCode)
+		assert.Contains(t, stdout, vmID)
+		assert.Contains(t, stdout, "running")
 	})
 
 	// --- list --running ---
 	t.Run("list-running", func(t *testing.T) {
 		stdout, _, exitCode := runCLI(t, "list", "--running")
-		if exitCode != 0 {
-			t.Fatalf("list --running exit code = %d", exitCode)
-		}
-		if !strings.Contains(stdout, vmID) {
-			t.Errorf("list --running should contain %s, got: %s", vmID, stdout)
-		}
+		require.Equal(t, 0, exitCode)
+		assert.Contains(t, stdout, vmID)
 	})
 
 	// --- get ---
 	t.Run("get", func(t *testing.T) {
 		stdout, _, exitCode := runCLI(t, "get", vmID)
-		if exitCode != 0 {
-			t.Fatalf("get exit code = %d", exitCode)
-		}
+		require.Equal(t, 0, exitCode)
 		var state map[string]interface{}
-		if err := json.Unmarshal([]byte(stdout), &state); err != nil {
-			t.Fatalf("get output is not valid JSON: %v\noutput: %s", err, stdout)
-		}
-		if state["id"] != vmID {
-			t.Errorf("get id = %v, want %s", state["id"], vmID)
-		}
-		if state["status"] != "running" {
-			t.Errorf("get status = %v, want running", state["status"])
-		}
+		err := json.Unmarshal([]byte(stdout), &state)
+		require.NoErrorf(t, err, "get output is not valid JSON: %s", stdout)
+		assert.Equal(t, vmID, state["id"])
+		assert.Equal(t, "running", state["status"])
 	})
 
 	// --- exec ---
 	t.Run("exec", func(t *testing.T) {
 		stdout, _, exitCode := runCLIWithTimeout(t, 30*time.Second, "exec", vmID, "echo", "from-exec")
-		if exitCode != 0 {
-			t.Fatalf("exec exit code = %d", exitCode)
-		}
-		if !strings.Contains(stdout, "from-exec") {
-			t.Errorf("exec stdout = %q, want to contain 'from-exec'", stdout)
-		}
+		require.Equal(t, 0, exitCode)
+		assert.Contains(t, stdout, "from-exec")
 	})
 
 	// --- exec multiple commands ---
 	t.Run("exec-multi", func(t *testing.T) {
 		stdout, _, exitCode := runCLIWithTimeout(t, 30*time.Second, "exec", vmID, "--", "sh", "-c", "echo one && echo two")
-		if exitCode != 0 {
-			t.Fatalf("exec exit code = %d", exitCode)
-		}
-		if !strings.Contains(stdout, "one") || !strings.Contains(stdout, "two") {
-			t.Errorf("exec stdout = %q, want 'one' and 'two'", stdout)
-		}
+		require.Equal(t, 0, exitCode)
+		assert.Contains(t, stdout, "one")
+		assert.Contains(t, stdout, "two")
 	})
 
 	// --- kill ---
 	t.Run("kill", func(t *testing.T) {
 		stdout, _, exitCode := runCLI(t, "kill", vmID)
-		if exitCode != 0 {
-			t.Fatalf("kill exit code = %d", exitCode)
-		}
-		if !strings.Contains(stdout, "Killed") {
-			t.Errorf("kill output = %q, want to contain 'Killed'", stdout)
-		}
+		require.Equal(t, 0, exitCode)
+		assert.Contains(t, stdout, "Killed")
 
 		// Wait for the process to die and status to update
 		time.Sleep(3 * time.Second)
 
 		// Verify it's no longer running
 		stdout2, _, _ := runCLI(t, "list", "--running")
-		if strings.Contains(stdout2, vmID) {
-			t.Errorf("VM %s should not appear in running list after kill", vmID)
-		}
+		assert.NotContains(t, stdout2, vmID, "VM should not appear in running list after kill")
 	})
 
 	// --- rm ---
 	t.Run("rm", func(t *testing.T) {
 		stdout, _, exitCode := runCLI(t, "rm", vmID)
-		if exitCode != 0 {
-			t.Fatalf("rm exit code = %d", exitCode)
-		}
-		if !strings.Contains(stdout, "Removed") {
-			t.Errorf("rm output = %q, want to contain 'Removed'", stdout)
-		}
+		require.Equal(t, 0, exitCode)
+		assert.Contains(t, stdout, "Removed")
 
 		// Verify it's gone from list
 		stdout2, _, _ := runCLI(t, "list")
-		if strings.Contains(stdout2, vmID) {
-			t.Errorf("VM %s should not appear in list after rm", vmID)
-		}
+		assert.NotContains(t, stdout2, vmID, "VM should not appear in list after rm")
 	})
 }
 
@@ -347,12 +273,8 @@ func TestCLIGetNonExistent(t *testing.T) {
 
 func TestCLIKillNoArgs(t *testing.T) {
 	_, stderr, exitCode := runCLI(t, "kill")
-	if exitCode == 0 {
-		t.Errorf("expected non-zero exit code when no VM ID provided")
-	}
-	if !strings.Contains(stderr, "VM ID required") {
-		t.Errorf("stderr = %q, want to contain 'VM ID required'", stderr)
-	}
+	assert.NotEqual(t, 0, exitCode, "expected non-zero exit code when no VM ID provided")
+	assert.Contains(t, stderr, "VM ID required")
 }
 
 // ---------------------------------------------------------------------------
@@ -361,12 +283,8 @@ func TestCLIKillNoArgs(t *testing.T) {
 
 func TestCLIRmNoArgs(t *testing.T) {
 	_, stderr, exitCode := runCLI(t, "rm")
-	if exitCode == 0 {
-		t.Errorf("expected non-zero exit code when no VM ID provided")
-	}
-	if !strings.Contains(stderr, "VM ID required") {
-		t.Errorf("stderr = %q, want to contain 'VM ID required'", stderr)
-	}
+	assert.NotEqual(t, 0, exitCode, "expected non-zero exit code when no VM ID provided")
+	assert.Contains(t, stderr, "VM ID required")
 }
 
 // ---------------------------------------------------------------------------
@@ -375,19 +293,13 @@ func TestCLIRmNoArgs(t *testing.T) {
 
 func TestCLIExecNoArgs(t *testing.T) {
 	_, _, exitCode := runCLI(t, "exec")
-	if exitCode == 0 {
-		t.Errorf("expected non-zero exit code when no args provided")
-	}
+	assert.NotEqual(t, 0, exitCode, "expected non-zero exit code when no args provided")
 }
 
 func TestCLIExecNonExistentVM(t *testing.T) {
 	_, stderr, exitCode := runCLI(t, "exec", "vm-nonexistent", "echo", "hi")
-	if exitCode == 0 {
-		t.Errorf("expected non-zero exit code for non-existent VM")
-	}
-	if !strings.Contains(stderr, "not found") {
-		t.Errorf("stderr = %q, want to contain 'not found'", stderr)
-	}
+	assert.NotEqual(t, 0, exitCode, "expected non-zero exit code for non-existent VM")
+	assert.Contains(t, stderr, "not found")
 }
 
 // ---------------------------------------------------------------------------
@@ -396,12 +308,8 @@ func TestCLIExecNonExistentVM(t *testing.T) {
 
 func TestCLIPrune(t *testing.T) {
 	stdout, _, exitCode := runCLI(t, "prune")
-	if exitCode != 0 {
-		t.Fatalf("prune exit code = %d", exitCode)
-	}
-	if !strings.Contains(stdout, "Pruned") {
-		t.Errorf("prune output = %q, want to contain 'Pruned'", stdout)
-	}
+	require.Equal(t, 0, exitCode)
+	assert.Contains(t, stdout, "Pruned")
 }
 
 // ---------------------------------------------------------------------------
@@ -414,9 +322,7 @@ func TestCLIRunRmFalseNoCommand(t *testing.T) {
 	cmd := exec.Command(bin, "run", "--image", "alpine:latest", "--rm=false")
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("failed to start: %v", err)
-	}
+	require.NoError(t, cmd.Start(), "failed to start")
 	runPID := cmd.Process.Pid
 
 	// Wait for the sandbox to come up
@@ -448,18 +354,12 @@ func TestCLIRunRmFalseNoCommand(t *testing.T) {
 		}
 	})
 
-	if vmID == "" {
-		t.Fatalf("timed out waiting for sandbox; stderr: %s", stderr.String())
-	}
+	require.NotEmptyf(t, vmID, "timed out waiting for sandbox; stderr: %s", stderr.String())
 
 	// Verify we can exec into it
 	stdout, _, exitCode := runCLIWithTimeout(t, 30*time.Second, "exec", vmID, "echo", "alive")
-	if exitCode != 0 {
-		t.Fatalf("exec exit code = %d", exitCode)
-	}
-	if !strings.Contains(stdout, "alive") {
-		t.Errorf("exec stdout = %q, want 'alive'", stdout)
-	}
+	require.Equal(t, 0, exitCode)
+	assert.Contains(t, stdout, "alive")
 }
 
 // ---------------------------------------------------------------------------
@@ -468,12 +368,8 @@ func TestCLIRunRmFalseNoCommand(t *testing.T) {
 
 func TestCLIListAlias(t *testing.T) {
 	stdout, _, exitCode := runCLI(t, "ls")
-	if exitCode != 0 {
-		t.Fatalf("ls exit code = %d", exitCode)
-	}
-	if !strings.Contains(stdout, "ID") {
-		t.Errorf("ls output should contain header, got: %s", stdout)
-	}
+	require.Equal(t, 0, exitCode)
+	assert.Contains(t, stdout, "ID")
 }
 
 // ---------------------------------------------------------------------------
@@ -482,25 +378,17 @@ func TestCLIListAlias(t *testing.T) {
 
 func TestCLIHelp(t *testing.T) {
 	stdout, _, exitCode := runCLI(t, "--help")
-	if exitCode != 0 {
-		t.Fatalf("--help exit code = %d", exitCode)
-	}
+	require.Equal(t, 0, exitCode)
 	for _, sub := range []string{"run", "exec", "build", "pull", "list", "get", "kill", "rm", "prune", "rpc", "version"} {
-		if !strings.Contains(stdout, sub) {
-			t.Errorf("help output should mention %q subcommand", sub)
-		}
+		assert.Containsf(t, stdout, sub, "help output should mention %q subcommand", sub)
 	}
 }
 
 func TestCLIRunHelp(t *testing.T) {
 	stdout, _, exitCode := runCLI(t, "run", "--help")
-	if exitCode != 0 {
-		t.Fatalf("run --help exit code = %d", exitCode)
-	}
+	require.Equal(t, 0, exitCode)
 	for _, flag := range []string{"--image", "--cpus", "--memory", "--timeout", "--disk-size", "--allow-host", "--secret", "--rm"} {
-		if !strings.Contains(stdout, flag) {
-			t.Errorf("run --help should mention %q flag", flag)
-		}
+		assert.Containsf(t, stdout, flag, "run --help should mention %q flag", flag)
 	}
 }
 
@@ -510,9 +398,7 @@ func TestCLIRunHelp(t *testing.T) {
 
 func TestCLIKillAll(t *testing.T) {
 	_, _, exitCode := runCLI(t, "kill", "--all")
-	if exitCode != 0 {
-		t.Errorf("kill --all exit code = %d, want 0", exitCode)
-	}
+	assert.Equal(t, 0, exitCode)
 }
 
 // ---------------------------------------------------------------------------
@@ -521,9 +407,7 @@ func TestCLIKillAll(t *testing.T) {
 
 func TestCLIRmStopped(t *testing.T) {
 	_, _, exitCode := runCLI(t, "rm", "--stopped")
-	if exitCode != 0 {
-		t.Errorf("rm --stopped exit code = %d, want 0", exitCode)
-	}
+	assert.Equal(t, 0, exitCode)
 }
 
 // ---------------------------------------------------------------------------
@@ -532,26 +416,19 @@ func TestCLIRmStopped(t *testing.T) {
 
 func TestCLIImageLsShowsHeader(t *testing.T) {
 	stdout, _, exitCode := runCLI(t, "image", "ls")
-	if exitCode != 0 {
-		t.Fatalf("image ls exit code = %d", exitCode)
-	}
-	if !strings.Contains(stdout, "TAG") || !strings.Contains(stdout, "SOURCE") {
-		t.Errorf("image ls should show header, got: %s", stdout)
-	}
+	require.Equal(t, 0, exitCode)
+	assert.Contains(t, stdout, "TAG")
+	assert.Contains(t, stdout, "SOURCE")
 }
 
 func TestCLIImageRmNonExistent(t *testing.T) {
 	_, _, exitCode := runCLI(t, "image", "rm", "nonexistent:tag")
-	if exitCode == 0 {
-		t.Errorf("expected non-zero exit code for non-existent image")
-	}
+	assert.NotEqual(t, 0, exitCode, "expected non-zero exit code for non-existent image")
 }
 
 func TestCLIImageRmNoArgs(t *testing.T) {
 	_, _, exitCode := runCLI(t, "image", "rm")
-	if exitCode == 0 {
-		t.Errorf("expected non-zero exit code when no tag provided")
-	}
+	assert.NotEqual(t, 0, exitCode, "expected non-zero exit code when no tag provided")
 }
 
 func TestCLIImagePullAndRm(t *testing.T) {
@@ -559,36 +436,22 @@ func TestCLIImagePullAndRm(t *testing.T) {
 
 	// Pull the image (ensures it's in the registry cache)
 	_, _, exitCode := runCLIWithTimeout(t, 5*time.Minute, "pull", img)
-	if exitCode != 0 {
-		t.Fatalf("pull exit code = %d", exitCode)
-	}
+	require.Equal(t, 0, exitCode)
 
 	// Verify it appears in image ls
 	stdout, _, exitCode := runCLI(t, "image", "ls")
-	if exitCode != 0 {
-		t.Fatalf("image ls exit code = %d", exitCode)
-	}
-	if !strings.Contains(stdout, img) {
-		t.Fatalf("image ls should contain %q, got:\n%s", img, stdout)
-	}
+	require.Equal(t, 0, exitCode)
+	require.Containsf(t, stdout, img, "image ls should contain %q", img)
 
 	// Remove it
 	stdout, _, exitCode = runCLI(t, "image", "rm", img)
-	if exitCode != 0 {
-		t.Fatalf("image rm exit code = %d, want 0", exitCode)
-	}
-	if !strings.Contains(stdout, "Removed") {
-		t.Errorf("image rm output = %q, want to contain 'Removed'", stdout)
-	}
+	require.Equal(t, 0, exitCode)
+	assert.Contains(t, stdout, "Removed")
 
 	// Verify it's gone from image ls
 	stdout, _, exitCode = runCLI(t, "image", "ls")
-	if exitCode != 0 {
-		t.Fatalf("image ls exit code = %d", exitCode)
-	}
-	if strings.Contains(stdout, img) {
-		t.Errorf("image ls should not contain %q after rm, got:\n%s", img, stdout)
-	}
+	require.Equal(t, 0, exitCode)
+	assert.NotContainsf(t, stdout, img, "image ls should not contain %q after rm", img)
 }
 
 func TestCLIImageRmIdempotent(t *testing.T) {
@@ -598,12 +461,8 @@ func TestCLIImageRmIdempotent(t *testing.T) {
 	runCLIWithTimeout(t, 5*time.Minute, "pull", img)
 
 	_, _, exitCode := runCLI(t, "image", "rm", img)
-	if exitCode != 0 {
-		t.Fatalf("first image rm exit code = %d, want 0", exitCode)
-	}
+	require.Equal(t, 0, exitCode)
 
 	_, _, exitCode = runCLI(t, "image", "rm", img)
-	if exitCode == 0 {
-		t.Errorf("second image rm should fail for already-removed image")
-	}
+	assert.NotEqual(t, 0, exitCode, "second image rm should fail for already-removed image")
 }

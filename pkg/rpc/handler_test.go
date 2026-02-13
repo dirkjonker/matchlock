@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/jingkaihe/matchlock/pkg/api"
 )
 
@@ -129,9 +132,7 @@ func TestHandlerConcurrentExec(t *testing.T) {
 
 	rpc.send("create", 1, map[string]string{"image": "alpine:latest"})
 	msg := rpc.read()
-	if msg.Error != nil {
-		t.Fatalf("create failed: %s", msg.Error.Message)
-	}
+	require.Nil(t, msg.Error, "create failed")
 
 	rpc.send("exec", 10, map[string]string{"command": "cmd-a"})
 	rpc.send("exec", 11, map[string]string{"command": "cmd-b"})
@@ -140,9 +141,7 @@ func TestHandlerConcurrentExec(t *testing.T) {
 	results := make(map[uint64]string)
 	for i := 0; i < 3; i++ {
 		msg := rpc.read()
-		if msg.Error != nil {
-			t.Fatalf("exec failed: %s", msg.Error.Message)
-		}
+		require.Nil(t, msg.Error, "exec failed")
 		var r struct {
 			Stdout string `json:"stdout"`
 		}
@@ -151,16 +150,14 @@ func TestHandlerConcurrentExec(t *testing.T) {
 		results[*msg.ID] = string(decoded)
 	}
 
-	if results[10] != "cmd-a" || results[11] != "cmd-b" || results[12] != "cmd-c" {
-		t.Fatalf("unexpected results: %v", results)
-	}
+	require.Equal(t, "cmd-a", results[10])
+	require.Equal(t, "cmd-b", results[11])
+	require.Equal(t, "cmd-c", results[12])
 
 	mu.Lock()
 	peak := maxRunning
 	mu.Unlock()
-	if peak < 2 {
-		t.Fatalf("expected concurrent execution, but peak running was %d", peak)
-	}
+	require.GreaterOrEqual(t, peak, 2, "expected concurrent execution, but peak running was %d", peak)
 }
 
 func TestHandlerExecStream(t *testing.T) {
@@ -198,9 +195,7 @@ func TestHandlerExecStream(t *testing.T) {
 		notifications = append(notifications, msg)
 	}
 
-	if len(notifications) != 3 {
-		t.Fatalf("expected 3 notifications, got %d", len(notifications))
-	}
+	require.Len(t, notifications, 3)
 
 	stdoutCount := 0
 	stderrCount := 0
@@ -211,19 +206,16 @@ func TestHandlerExecStream(t *testing.T) {
 			stderrCount++
 		}
 	}
-	if stdoutCount != 2 || stderrCount != 1 {
-		t.Fatalf("expected 2 stdout + 1 stderr, got %d + %d", stdoutCount, stderrCount)
-	}
+	assert.Equal(t, 2, stdoutCount, "stdout notification count")
+	assert.Equal(t, 1, stderrCount, "stderr notification count")
 
-	if final == nil || final.Error != nil {
-		t.Fatal("expected successful final response")
-	}
+	require.NotNil(t, final, "expected final response")
+	require.Nil(t, final.Error, "expected successful final response")
 	var result struct {
 		ExitCode   int   `json:"exit_code"`
 		DurationMS int64 `json:"duration_ms"`
 	}
 	json.Unmarshal(final.Result, &result)
-	if result.ExitCode != 0 || result.DurationMS != 42 {
-		t.Fatalf("unexpected result: %+v", result)
-	}
+	assert.Equal(t, 0, result.ExitCode)
+	assert.Equal(t, int64(42), result.DurationMS)
 }
