@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/jingkaihe/matchlock/pkg/api"
 	sandboxnet "github.com/jingkaihe/matchlock/pkg/net"
@@ -23,10 +24,19 @@ func buildVFSProviders(config *api.Config, workspace string) map[string]vfs.Prov
 		}
 	}
 
+	cleanWorkspace := filepath.Clean(workspace)
+	hasWorkspaceMount := false
+	for path := range vfsProviders {
+		if filepath.Clean(path) == cleanWorkspace {
+			hasWorkspaceMount = true
+			break
+		}
+	}
+
 	// Keep a workspace root mount even when only nested mounts are configured.
 	// Without this, guest-fused root lookups on /workspace fail with ENOENT.
-	if _, ok := vfsProviders[workspace]; !ok {
-		vfsProviders[workspace] = vfs.NewMemoryProvider()
+	if !hasWorkspaceMount {
+		vfsProviders[cleanWorkspace] = vfs.NewMemoryProvider()
 	}
 
 	return vfsProviders

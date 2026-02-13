@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/jingkaihe/matchlock/pkg/api"
@@ -44,5 +45,29 @@ func TestBuildVFSProvidersKeepsExplicitWorkspaceMount(t *testing.T) {
 	providers := buildVFSProviders(config, workspace)
 	if got := len(providers); got != 1 {
 		t.Fatalf("expected exactly one mount provider, got %d", got)
+	}
+}
+
+func TestBuildVFSProvidersDoesNotDuplicateCanonicalWorkspaceMount(t *testing.T) {
+	workspace := "/workspace"
+	config := &api.Config{
+		VFS: &api.VFSConfig{
+			Mounts: map[string]api.MountConfig{
+				"/workspace/": {Type: "memory"},
+			},
+		},
+	}
+
+	providers := buildVFSProviders(config, workspace)
+
+	var workspaceMounts int
+	for path := range providers {
+		if filepath.Clean(path) == workspace {
+			workspaceMounts++
+		}
+	}
+
+	if workspaceMounts != 1 {
+		t.Fatalf("expected exactly one canonical workspace mount, got %d (providers=%d)", workspaceMounts, len(providers))
 	}
 }
